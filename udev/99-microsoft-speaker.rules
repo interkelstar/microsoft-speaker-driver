@@ -1,0 +1,9 @@
+# Microsoft Modern USB-C Speaker — speakerctl udev rules
+# Grants group access to evdev and hidraw nodes so the daemon runs without root.
+# TAG+="uaccess" also grants the logged-in seat user access (useful for testing).
+
+SUBSYSTEM=="input", ATTRS{idVendor}=="045e", ATTRS{idProduct}=="083e", \
+    GROUP="input", MODE="0660", TAG+="uaccess"
+
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="045e", ATTRS{idProduct}=="083e", \
+    GROUP="plugdev", MODE="0660", TAG+="uaccess"

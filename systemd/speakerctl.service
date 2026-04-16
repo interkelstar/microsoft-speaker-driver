@@ -1,0 +1,30 @@
+[Unit]
+Description=Microsoft Modern USB-C Speaker button daemon
+Documentation=https://github.com/interkelstar/microsoft-speaker-driver
+After=systemd-udevd.service sound.target
+Wants=sound.target
+
+[Service]
+Type=simple
+User=speakerctl
+Group=speakerctl
+# belt-and-suspenders: groups also set via usermod in install.sh
+SupplementaryGroups=input plugdev audio
+ExecStart=/usr/local/bin/speakerctl
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=3s
+
+# Security hardening
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+RuntimeDirectory=speakerctl
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=speakerctl
+
+[Install]
+WantedBy=multi-user.target

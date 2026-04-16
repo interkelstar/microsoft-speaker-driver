@@ -1,0 +1,29 @@
+# speakerctl — Microsoft Modern USB-C Speaker configuration
+# Edit this file to configure what each button does.
+# After editing: sudo systemctl reload speakerctl
+
+[device]
+# USB identifiers — don't change unless you have a different hardware revision
+vid = "045e"
+pid = "083e"
+# ALSA card name — shown by: cat /proc/asound/cards
+alsa_card = "Speaker"
+
+[volume_up]
+command = "amixer -c Speaker set 'PCM' 5%+"
+
+[volume_down]
+command = "amixer -c Speaker set 'PCM' 5%-"
+
+[mute]
+# $STATE env var is set to "muted" or "unmuted" (post-toggle state).
+# The kernel already handles the actual mute — this is for notifications.
+command = "/etc/speakerctl/scripts/mute-notify.sh"
+
+[teams]
+command = "/etc/speakerctl/scripts/teams-button.sh"
+
+[phone]
+command = "/etc/speakerctl/scripts/phone-button.sh"
+double_tap_command = "/etc/speakerctl/scripts/phone-double-tap.sh"
+double_tap_window_seconds = 0.4
