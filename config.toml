@@ -9,6 +9,12 @@ pid = "083e"
 # ALSA card name — shown by: cat /proc/asound/cards
 alsa_card = "Speaker"
 
+[startup]
+# Volume levels (0-100%) applied on daemon start and after each reconnect.
+# Comment out a line to leave that level untouched.
+speaker_percent = 60
+mic_percent = 85
+
 [volume_up]
 command = "amixer -c Speaker set 'PCM' 5%+"
 

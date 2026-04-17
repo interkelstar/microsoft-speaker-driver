@@ -23,6 +23,8 @@ class Config:
     mute: ButtonConfig
     teams: ButtonConfig
     phone: ButtonConfig
+    startup_speaker_percent: int | None = None
+    startup_mic_percent: int | None = None
 
 
 def load_config(path: str | Path) -> Config:
@@ -44,6 +46,8 @@ def load_config(path: str | Path) -> Config:
             hold_threshold_seconds=float(sec.get("hold_threshold_seconds", 0.8)),
         )
 
+    startup = data.get("startup", {})
+
     return Config(
         vid=device.get("vid", "045e"),
         pid=device.get("pid", "083e"),
@@ -53,4 +57,6 @@ def load_config(path: str | Path) -> Config:
         mute=btn("mute"),
         teams=btn("teams"),
         phone=btn("phone"),
+        startup_speaker_percent=startup.get("speaker_percent"),
+        startup_mic_percent=startup.get("mic_percent"),
     )

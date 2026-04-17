@@ -12,13 +12,27 @@ import pyudev
 
 from .config import Config, load_config
 from .discovery import DeviceSet, discover
-from . import evdev_watcher, hidraw_watcher
+from . import evdev_watcher, executor, hidraw_watcher
 
 _LOG = logging.getLogger(__name__)
 
 
 class DeviceGoneError(Exception):
     pass
+
+
+async def _apply_startup_volumes(config: Config) -> None:
+    """Set speaker/mic to configured percentages after each device (re)connect."""
+    if config.startup_speaker_percent is not None:
+        await executor.run(
+            f"amixer -c {config.alsa_card} set 'PCM' {config.startup_speaker_percent}%"
+        )
+        _LOG.info("Set speaker volume to %d%%", config.startup_speaker_percent)
+    if config.startup_mic_percent is not None:
+        await executor.run(
+            f"amixer -c {config.alsa_card} set 'Headset' {config.startup_mic_percent}%"
+        )
+        _LOG.info("Set mic volume to %d%%", config.startup_mic_percent)
 
 
 def _make_tasks(devices: DeviceSet, config: Config) -> list[asyncio.Task]:
@@ -109,6 +123,7 @@ async def run(config_path: str, reload_event: asyncio.Event) -> None:
             continue
 
         _LOG.info("Device found: %s", devices)
+        await _apply_startup_volumes(config)
         tasks = _make_tasks(devices, config)
 
         if not tasks:
