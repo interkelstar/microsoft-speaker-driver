@@ -25,5 +25,4 @@ command = "/etc/speakerctl/scripts/teams-button.sh"
 
 [phone]
 command = "/etc/speakerctl/scripts/phone-button.sh"
-double_tap_command = "/etc/speakerctl/scripts/phone-double-tap.sh"
-double_tap_window_seconds = 0.4
+debounce_seconds = 0.5
