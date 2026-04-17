@@ -93,6 +93,17 @@ udevadm control --reload-rules
 udevadm trigger --subsystem-match=usb --attr-match=idVendor=045e 2>/dev/null || true
 echo "    Rules installed, udev reloaded"
 
+# ── 6b. sudoers for pactl (optional, required by [startup] pulse_user) ──────
+echo "==> Installing sudoers rule for pactl..."
+cat > /etc/sudoers.d/speakerctl << 'EOF'
+# Allow the speakerctl daemon to run pactl as any user, without a password.
+# Used only when [startup] pulse_user is configured, so the daemon can adjust
+# PulseAudio sink/source volumes in that user's session.
+speakerctl ALL=(ALL) NOPASSWD: /usr/bin/pactl
+EOF
+chmod 0440 /etc/sudoers.d/speakerctl
+echo "    /etc/sudoers.d/speakerctl installed"
+
 # ── 7. systemd ──────────────────────────────────────────────────────────────
 echo "==> Installing systemd service..."
 

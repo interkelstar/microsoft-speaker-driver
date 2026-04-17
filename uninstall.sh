@@ -17,6 +17,7 @@ systemctl daemon-reload
 rm -f /usr/local/bin/speakerctl
 rm -rf /usr/lib/speakerctl
 rm -f /etc/udev/rules.d/99-microsoft-speaker.rules
+rm -f /etc/sudoers.d/speakerctl
 udevadm control --reload-rules
 
 echo ""

@@ -21,18 +21,43 @@ class DeviceGoneError(Exception):
     pass
 
 
+def _pactl_cmd(pulse_user: str, kind: str, percent: int) -> str:
+    """
+    Build a shell command that finds the Microsoft USB-C Speaker sink or source
+    in `pulse_user`'s PulseAudio session and sets its volume.
+    """
+    assert kind in ("sink", "source")
+    needs_sudo = f"sudo -u {pulse_user} "
+    xdg = f'XDG_RUNTIME_DIR="/run/user/$(id -u {pulse_user})"'
+    # Exclude .monitor and .echo-cancel — we want the raw hardware sink/source.
+    list_cmd = (
+        f'{needs_sudo}{xdg} pactl list {kind}s short '
+        f'| awk \'/Modern_USB-C_Speaker/ && !/monitor|echo-cancel/ {{print $2; exit}}\''
+    )
+    return (
+        f'NAME=$({list_cmd}); '
+        f'[ -n "$NAME" ] && {needs_sudo}{xdg} pactl set-{kind}-volume "$NAME" {percent}% '
+        f'|| echo "speakerctl: no PulseAudio {kind} found for speaker" >&2'
+    )
+
+
 async def _apply_startup_volumes(config: Config) -> None:
     """Set speaker/mic to configured percentages after each device (re)connect."""
+    pulse_user = config.startup_pulse_user
+
     if config.startup_speaker_percent is not None:
-        await executor.run(
-            f"amixer -c {config.alsa_card} set 'PCM' {config.startup_speaker_percent}%"
-        )
-        _LOG.info("Set speaker volume to %d%%", config.startup_speaker_percent)
+        pct = config.startup_speaker_percent
+        await executor.run(f"amixer -c {config.alsa_card} set 'PCM' {pct}%")
+        if pulse_user:
+            await executor.run(_pactl_cmd(pulse_user, "sink", pct))
+        _LOG.info("Set speaker volume to %d%%", pct)
+
     if config.startup_mic_percent is not None:
-        await executor.run(
-            f"amixer -c {config.alsa_card} set 'Headset' {config.startup_mic_percent}%"
-        )
-        _LOG.info("Set mic volume to %d%%", config.startup_mic_percent)
+        pct = config.startup_mic_percent
+        await executor.run(f"amixer -c {config.alsa_card} set 'Headset' {pct}%")
+        if pulse_user:
+            await executor.run(_pactl_cmd(pulse_user, "source", pct))
+        _LOG.info("Set mic volume to %d%%", pct)
 
 
 async def _startup_volume_guardian(config: Config) -> None:

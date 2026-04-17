@@ -25,6 +25,7 @@ class Config:
     phone: ButtonConfig
     startup_speaker_percent: int | None = None
     startup_mic_percent: int | None = None
+    startup_pulse_user: str | None = None
 
 
 def load_config(path: str | Path) -> Config:
@@ -59,4 +60,5 @@ def load_config(path: str | Path) -> Config:
         phone=btn("phone"),
         startup_speaker_percent=startup.get("speaker_percent"),
         startup_mic_percent=startup.get("mic_percent"),
+        startup_pulse_user=startup.get("pulse_user"),
     )

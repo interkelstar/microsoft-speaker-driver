@@ -14,6 +14,10 @@ alsa_card = "Speaker"
 # Comment out a line to leave that level untouched.
 speaker_percent = 60
 mic_percent = 85
+# If set, also apply the same levels to this user's PulseAudio sink/source
+# (ALSA and PulseAudio keep independent volumes — most desktop UIs show the
+# PulseAudio one). Requires the sudoers rule installed by install.sh.
+# pulse_user = "yourusername"
 
 [volume_up]
 command = "amixer -c Speaker set 'PCM' 5%+"
