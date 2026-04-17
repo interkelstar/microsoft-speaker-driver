@@ -17,9 +17,11 @@ RestartSec=3s
 
 # Security hardening
 PrivateTmp=true
-NoNewPrivileges=true
+# NoNewPrivileges is intentionally NOT set: when [startup] pulse_user is
+# configured, the daemon runs `sudo -u <user> pactl ...` to set PulseAudio
+# volumes, which requires privilege escalation.
 ProtectSystem=strict
-ProtectHome=true
+ProtectHome=read-only
 RuntimeDirectory=speakerctl
 
 StandardOutput=journal
