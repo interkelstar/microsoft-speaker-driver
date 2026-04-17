@@ -35,6 +35,20 @@ async def _apply_startup_volumes(config: Config) -> None:
         _LOG.info("Set mic volume to %d%%", config.startup_mic_percent)
 
 
+async def _startup_volume_guardian(config: Config) -> None:
+    """
+    Re-apply startup volumes after delays so we override anything that races
+    with us at boot (PulseAudio/PipeWire stream-restore modules, user session
+    autostart scripts, etc.).
+    """
+    for delay in (5, 15):
+        try:
+            await asyncio.sleep(delay)
+        except asyncio.CancelledError:
+            return
+        await _apply_startup_volumes(config)
+
+
 def _make_tasks(devices: DeviceSet, config: Config) -> list[asyncio.Task]:
     tasks = []
     loop = asyncio.get_event_loop()
@@ -124,6 +138,9 @@ async def run(config_path: str, reload_event: asyncio.Event) -> None:
 
         _LOG.info("Device found: %s", devices)
         await _apply_startup_volumes(config)
+        guardian_task = asyncio.get_event_loop().create_task(
+            _startup_volume_guardian(config), name="volume_guardian"
+        )
         tasks = _make_tasks(devices, config)
 
         if not tasks:
@@ -137,8 +154,9 @@ async def run(config_path: str, reload_event: asyncio.Event) -> None:
 
         done, pending = await asyncio.wait(all_tasks, return_when=asyncio.FIRST_COMPLETED)
 
-        # Cancel everything still running
-        for t in pending:
+        # Cancel everything still running (including the volume guardian)
+        guardian_task.cancel()
+        for t in list(pending) + [guardian_task]:
             t.cancel()
             try:
                 await t
