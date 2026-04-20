@@ -47,14 +47,14 @@ async def _apply_startup_volumes(config: Config) -> None:
 
     if config.startup_speaker_percent is not None:
         pct = config.startup_speaker_percent
-        await executor.run(f"amixer -c {config.alsa_card} set 'PCM' {pct}%")
+        await executor.run(f"amixer -c {config.alsa_card} -M set 'PCM' {pct}%")
         if pulse_user:
             await executor.run(_pactl_cmd(pulse_user, "sink", pct))
         _LOG.info("Set speaker volume to %d%%", pct)
 
     if config.startup_mic_percent is not None:
         pct = config.startup_mic_percent
-        await executor.run(f"amixer -c {config.alsa_card} set 'Headset' {pct}%")
+        await executor.run(f"amixer -c {config.alsa_card} -M set 'Headset' {pct}%")
         if pulse_user:
             await executor.run(_pactl_cmd(pulse_user, "source", pct))
         _LOG.info("Set mic volume to %d%%", pct)

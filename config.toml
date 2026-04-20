@@ -20,10 +20,10 @@ mic_percent = 85
 # pulse_user = "yourusername"
 
 [volume_up]
-command = "amixer -c Speaker set 'PCM' 5%+"
+command = "amixer -c Speaker -M set 'PCM' 5%+"
 
 [volume_down]
-command = "amixer -c Speaker set 'PCM' 5%-"
+command = "amixer -c Speaker -M set 'PCM' 5%-"
 
 [mute]
 # $STATE env var is set to "muted" or "unmuted" (post-toggle state).
