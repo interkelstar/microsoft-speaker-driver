@@ -1,5 +1,5 @@
 import tomllib
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 
@@ -7,10 +7,6 @@ from pathlib import Path
 class ButtonConfig:
     command: str
     debounce_seconds: float = 0.0
-    double_tap_command: str = ""
-    hold_command: str = ""
-    double_tap_window_seconds: float = 0.4
-    hold_threshold_seconds: float = 0.8
 
 
 @dataclass
@@ -41,10 +37,6 @@ def load_config(path: str | Path) -> Config:
         return ButtonConfig(
             command=sec["command"],
             debounce_seconds=float(sec.get("debounce_seconds", 0.0)),
-            double_tap_command=sec.get("double_tap_command", ""),
-            hold_command=sec.get("hold_command", ""),
-            double_tap_window_seconds=float(sec.get("double_tap_window_seconds", 0.4)),
-            hold_threshold_seconds=float(sec.get("hold_threshold_seconds", 0.8)),
         )
 
     startup = data.get("startup", {})

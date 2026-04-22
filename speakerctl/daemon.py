@@ -101,14 +101,6 @@ def _make_tasks(devices: DeviceSet, config: Config) -> list[asyncio.Task]:
     else:
         _LOG.warning("No mute evdev node found")
 
-    if devices.teams_evdev:
-        tasks.append(loop.create_task(
-            _wrap(evdev_watcher.watch(devices.teams_evdev, "teams", config), "teams"),
-            name="teams"
-        ))
-    else:
-        _LOG.warning("No teams evdev node found")
-
     if devices.hidraw:
         tasks.append(loop.create_task(
             _wrap(hidraw_watcher.watch(devices.hidraw, config), "hidraw"),
@@ -155,7 +147,7 @@ async def run(config_path: str, reload_event: asyncio.Event) -> None:
     while True:
         # Discover device nodes
         devices = discover(config.vid, config.pid)
-        if not any([devices.hidraw, devices.volume_evdev, devices.mute_evdev, devices.teams_evdev]):
+        if not any([devices.hidraw, devices.volume_evdev, devices.mute_evdev]):
             _LOG.info("Speaker not found — waiting for device to be plugged in...")
             await _udev_wait_for_device(config.vid, config.pid)
             await asyncio.sleep(0.5)  # brief settle after udev fires
