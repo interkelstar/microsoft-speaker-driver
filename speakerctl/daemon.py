@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import pwd
 from pathlib import Path
 
 import pyudev
@@ -34,44 +35,104 @@ def _pactl_cmd(pulse_user: str, kind: str, percent: int) -> str:
         f'{needs_sudo}{xdg} pactl list {kind}s short '
         f'| awk \'/Modern_USB-C_Speaker/ && !/monitor|echo-cancel/ {{print $2; exit}}\''
     )
+    # NAME empty => no matching sink/source yet: exit 1 so callers can tell
+    # "not found" apart from "pactl ran and succeeded".
     return (
         f'NAME=$({list_cmd}); '
-        f'[ -n "$NAME" ] && {needs_sudo}{xdg} pactl set-{kind}-volume "$NAME" {percent}% '
-        f'|| echo "speakerctl: no PulseAudio {kind} found for speaker" >&2'
+        f'if [ -n "$NAME" ]; then {needs_sudo}{xdg} pactl set-{kind}-volume "$NAME" {percent}%; '
+        f'else echo "speakerctl: no PulseAudio {kind} found for speaker" >&2; exit 1; fi'
     )
 
 
-async def _apply_startup_volumes(config: Config) -> None:
-    """Set speaker/mic to configured percentages after each device (re)connect."""
+def _alsa_card_ready(card: str) -> bool:
+    """Check whether an ALSA card with this name is enumerated yet."""
+    try:
+        return card in Path("/proc/asound/cards").read_text()
+    except OSError:
+        return False
+
+
+def _pulse_socket_ready(pulse_user: str) -> bool:
+    """Check whether pulse_user's PulseAudio/PipeWire user session is up yet."""
+    try:
+        uid = pwd.getpwnam(pulse_user).pw_uid
+    except KeyError:
+        return False
+    run_dir = Path(f"/run/user/{uid}")
+    return (run_dir / "pulse" / "native").exists() or (run_dir / "pipewire-0").exists()
+
+
+async def _apply_alsa_percent(card: str, control: str, pct: int) -> bool:
+    """Set an ALSA mixer control if the card is registered. Returns success."""
+    if not _alsa_card_ready(card):
+        _LOG.debug("ALSA card %s not registered yet — will retry", card)
+        return False
+    return await executor.run(f"amixer -c {card} -M set '{control}' {pct}%") == 0
+
+
+async def _apply_pulse_percent(pulse_user: str, kind: str, pct: int) -> bool:
+    """Set a PulseAudio/PipeWire sink or source volume if the session is up. Returns success."""
+    if not _pulse_socket_ready(pulse_user):
+        _LOG.debug("PulseAudio/PipeWire session for %s not up yet — will retry", pulse_user)
+        return False
+    return await executor.run(_pactl_cmd(pulse_user, kind, pct)) == 0
+
+
+async def _apply_startup_volumes(config: Config) -> bool:
+    """
+    Apply configured speaker/mic percentages to ALSA and (optionally)
+    PulseAudio/PipeWire. Returns True only once every configured target has
+    been confirmed applied — the guardian keeps retrying for as long as this
+    is False.
+    """
+    ok = True
     pulse_user = config.startup_pulse_user
 
     if config.startup_speaker_percent is not None:
         pct = config.startup_speaker_percent
-        await executor.run(f"amixer -c {config.alsa_card} -M set 'PCM' {pct}%")
-        if pulse_user:
-            await executor.run(_pactl_cmd(pulse_user, "sink", pct))
-        _LOG.info("Set speaker volume to %d%%", pct)
+        alsa_ok = await _apply_alsa_percent(config.alsa_card, "PCM", pct)
+        pulse_ok = await _apply_pulse_percent(pulse_user, "sink", pct) if pulse_user else True
+        if alsa_ok and pulse_ok:
+            _LOG.info("Set speaker volume to %d%%", pct)
+        ok = ok and alsa_ok and pulse_ok
 
     if config.startup_mic_percent is not None:
         pct = config.startup_mic_percent
-        await executor.run(f"amixer -c {config.alsa_card} -M set 'Headset' {pct}%")
-        if pulse_user:
-            await executor.run(_pactl_cmd(pulse_user, "source", pct))
-        _LOG.info("Set mic volume to %d%%", pct)
+        alsa_ok = await _apply_alsa_percent(config.alsa_card, "Headset", pct)
+        pulse_ok = await _apply_pulse_percent(pulse_user, "source", pct) if pulse_user else True
+        if alsa_ok and pulse_ok:
+            _LOG.info("Set mic volume to %d%%", pct)
+        ok = ok and alsa_ok and pulse_ok
+
+    return ok
 
 
-async def _startup_volume_guardian(config: Config) -> None:
+async def _startup_volume_guardian(config: Config, already_applied: bool) -> None:
     """
-    Re-apply startup volumes after delays so we override anything that races
-    with us at boot (PulseAudio/PipeWire stream-restore modules, user session
-    autostart scripts, etc.).
+    Keep re-applying startup volumes until every target is confirmed set.
+    PipeWire/PulseAudio runs in the user's own systemd instance and is
+    frequently not up yet when the USB device is enumerated at boot, so we
+    poll readiness (ALSA card in /proc/asound/cards, pulse/pipewire socket in
+    /run/user/<uid>) instead of giving up after a couple of fixed delays.
+    Polls every 5s for the first minute, then backs off to every 30s so a
+    slow user session doesn't leave us busy-looping forever. Exits as soon as
+    a full apply is confirmed, or when cancelled (device gone / reload).
     """
-    for delay in (5, 15):
+    if already_applied:
+        return
+
+    elapsed = 0.0
+    while True:
+        delay = 5.0 if elapsed < 60.0 else 30.0
         try:
             await asyncio.sleep(delay)
         except asyncio.CancelledError:
             return
-        await _apply_startup_volumes(config)
+        elapsed += delay
+
+        if await _apply_startup_volumes(config):
+            _LOG.debug("Startup volumes confirmed applied — guardian exiting")
+            return
 
 
 def _make_tasks(devices: DeviceSet, config: Config) -> list[asyncio.Task]:
@@ -154,9 +215,9 @@ async def run(config_path: str, reload_event: asyncio.Event) -> None:
             continue
 
         _LOG.info("Device found: %s", devices)
-        await _apply_startup_volumes(config)
+        initial_ok = await _apply_startup_volumes(config)
         guardian_task = asyncio.get_event_loop().create_task(
-            _startup_volume_guardian(config), name="volume_guardian"
+            _startup_volume_guardian(config, initial_ok), name="volume_guardian"
         )
         tasks = _make_tasks(devices, config)
 

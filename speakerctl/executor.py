@@ -10,8 +10,13 @@ import os
 _LOG = logging.getLogger(__name__)
 
 
-async def run(command: str, extra_env: dict[str, str] | None = None) -> None:
-    """Execute a shell command asynchronously, merging extra_env into the environment."""
+async def run(command: str, extra_env: dict[str, str] | None = None) -> int | None:
+    """
+    Execute a shell command asynchronously, merging extra_env into the environment.
+    Returns the process exit code, or None if the command couldn't even be
+    spawned — callers that need to know whether a command actually succeeded
+    (e.g. the startup volume guardian) should check this.
+    """
     env = os.environ.copy()
     if extra_env:
         env.update(extra_env)
@@ -30,5 +35,7 @@ async def run(command: str, extra_env: dict[str, str] | None = None) -> None:
                 _LOG.debug("  cmd> %s", line)
         if proc.returncode != 0:
             _LOG.warning("Command exited %d: %s", proc.returncode, command)
+        return proc.returncode
     except Exception as exc:
         _LOG.error("Failed to run command %r: %s", command, exc)
+        return None

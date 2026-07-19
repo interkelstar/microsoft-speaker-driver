@@ -1,7 +1,10 @@
 [Unit]
 Description=Microsoft Modern USB-C Speaker button daemon
 Documentation=https://github.com/interkelstar/microsoft-speaker-driver
-After=systemd-udevd.service sound.target
+# alsa-restore/alsa-state may not exist on every distro — After= on a
+# nonexistent unit is a harmless no-op, but where present it stops
+# alsactl restore from clobbering our startup volumes after we set them.
+After=systemd-udevd.service sound.target alsa-restore.service alsa-state.service
 Wants=sound.target
 
 [Service]
