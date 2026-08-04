@@ -53,13 +53,29 @@ def _alsa_card_ready(card: str) -> bool:
 
 
 def _pulse_socket_ready(pulse_user: str) -> bool:
-    """Check whether pulse_user's PulseAudio/PipeWire user session is up yet."""
+    """Check whether pulse_user's PulseAudio/PipeWire user session is up yet.
+
+    We run as our own system user, so /run/user/<uid> (mode 0700) is not ours
+    to traverse. Path.exists() swallows ENOENT but lets EACCES through, so a
+    naive check raises instead of answering. Permission denied is in fact the
+    answer we want: the directory is there, which means the session is up —
+    only ENOENT means it is not. Whether pactl can actually talk to it is
+    decided by the call itself, which reports its own exit code.
+    """
     try:
         uid = pwd.getpwnam(pulse_user).pw_uid
     except KeyError:
         return False
     run_dir = Path(f"/run/user/{uid}")
-    return (run_dir / "pulse" / "native").exists() or (run_dir / "pipewire-0").exists()
+    for candidate in (run_dir / "pulse" / "native", run_dir / "pipewire-0"):
+        try:
+            if candidate.exists():
+                return True
+        except PermissionError:
+            return True
+        except OSError:
+            continue
+    return False
 
 
 async def _apply_alsa_percent(card: str, control: str, pct: int) -> bool:
