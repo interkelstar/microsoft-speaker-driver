@@ -13,7 +13,7 @@ import pyudev
 
 from .config import Config, load_config
 from .discovery import DeviceSet, discover
-from . import evdev_watcher, executor, hidraw_watcher
+from . import aec, evdev_watcher, executor, hidraw_watcher
 
 _LOG = logging.getLogger(__name__)
 
@@ -94,15 +94,32 @@ async def _apply_pulse_percent(pulse_user: str, kind: str, pct: int) -> bool:
     return await executor.run(_pactl_cmd(pulse_user, kind, pct)) == 0
 
 
-async def _apply_startup_volumes(config: Config) -> bool:
+async def _apply_startup_audio(config: Config) -> bool:
     """
-    Apply configured speaker/mic percentages to ALSA and (optionally)
-    PulseAudio/PipeWire. Returns True only once every configured target has
-    been confirmed applied — the guardian keeps retrying for as long as this
-    is False.
+    Bring the audio stack to its configured startup state: echo cancellation
+    loaded (if enabled), and speaker/mic percentages applied to ALSA and
+    optionally PulseAudio/PipeWire. Returns True only once every configured
+    target has been confirmed — the guardian keeps retrying for as long as
+    this is False.
+
+    AEC is folded in here rather than done once at start-up because it needs
+    exactly the same thing the volumes do: a user PulseAudio session that is
+    frequently not up yet when the device is enumerated at boot. Reusing the
+    guardian means one retry loop covers both.
     """
     ok = True
     pulse_user = config.startup_pulse_user
+
+    if config.aec_enabled:
+        if not pulse_user:
+            _LOG.error("[aec] enabled but [startup] pulse_user is not set — skipping")
+        else:
+            ok = ok and await aec.ensure_loaded(
+                pulse_user,
+                config.aec_source_name,
+                config.aec_sink_name,
+                config.aec_method,
+            )
 
     if config.startup_speaker_percent is not None:
         pct = config.startup_speaker_percent
@@ -123,9 +140,9 @@ async def _apply_startup_volumes(config: Config) -> bool:
     return ok
 
 
-async def _startup_volume_guardian(config: Config, already_applied: bool) -> None:
+async def _startup_audio_guardian(config: Config, already_applied: bool) -> None:
     """
-    Keep re-applying startup volumes until every target is confirmed set.
+    Keep re-applying the startup audio state until every target is confirmed.
     PipeWire/PulseAudio runs in the user's own systemd instance and is
     frequently not up yet when the USB device is enumerated at boot, so we
     poll readiness (ALSA card in /proc/asound/cards, pulse/pipewire socket in
@@ -146,8 +163,8 @@ async def _startup_volume_guardian(config: Config, already_applied: bool) -> Non
             return
         elapsed += delay
 
-        if await _apply_startup_volumes(config):
-            _LOG.debug("Startup volumes confirmed applied — guardian exiting")
+        if await _apply_startup_audio(config):
+            _LOG.debug("Startup audio state confirmed — guardian exiting")
             return
 
 
@@ -231,9 +248,9 @@ async def run(config_path: str, reload_event: asyncio.Event) -> None:
             continue
 
         _LOG.info("Device found: %s", devices)
-        initial_ok = await _apply_startup_volumes(config)
+        initial_ok = await _apply_startup_audio(config)
         guardian_task = asyncio.get_event_loop().create_task(
-            _startup_volume_guardian(config, initial_ok), name="volume_guardian"
+            _startup_audio_guardian(config, initial_ok), name="audio_guardian"
         )
         tasks = _make_tasks(devices, config)
 

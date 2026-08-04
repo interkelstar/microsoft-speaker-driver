@@ -19,6 +19,17 @@ mic_percent = 85
 # PulseAudio one). Requires the sudoers rule installed by install.sh.
 # pulse_user = "yourusername"
 
+[aec]
+# Load PulseAudio's module-echo-cancel into pulse_user's session, exposing a
+# cancelled source and sink under fixed names. Anything that wants echo-free
+# audio — a voice assistant, a conferencing app — can then just ask for them
+# by name, instead of guessing at whatever the default device happens to be.
+# Requires [startup] pulse_user, and the sudoers rule installed by install.sh.
+# enabled = true
+# source_name = "aec_mic"
+# sink_name = "aec_speaker"
+# method = "webrtc"
+
 [volume_up]
 command = "amixer -c Speaker -M set 'PCM' 5%+"
 

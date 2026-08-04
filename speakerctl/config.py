@@ -22,6 +22,10 @@ class Config:
     startup_speaker_percent: int | None = None
     startup_mic_percent: int | None = None
     startup_pulse_user: str | None = None
+    aec_enabled: bool = False
+    aec_source_name: str = "aec_mic"
+    aec_sink_name: str = "aec_speaker"
+    aec_method: str = "webrtc"
 
 
 def load_config(path: str | Path) -> Config:
@@ -40,6 +44,7 @@ def load_config(path: str | Path) -> Config:
         )
 
     startup = data.get("startup", {})
+    aec = data.get("aec", {})
 
     return Config(
         vid=device.get("vid", "045e"),
@@ -53,4 +58,8 @@ def load_config(path: str | Path) -> Config:
         startup_speaker_percent=startup.get("speaker_percent"),
         startup_mic_percent=startup.get("mic_percent"),
         startup_pulse_user=startup.get("pulse_user"),
+        aec_enabled=bool(aec.get("enabled", False)),
+        aec_source_name=aec.get("source_name", "aec_mic"),
+        aec_sink_name=aec.get("sink_name", "aec_speaker"),
+        aec_method=aec.get("method", "webrtc"),
     )
