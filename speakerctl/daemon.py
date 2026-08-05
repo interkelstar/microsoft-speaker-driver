@@ -13,7 +13,7 @@ import pyudev
 
 from .config import Config, load_config
 from .discovery import DeviceSet, discover
-from . import aec, evdev_watcher, executor, hidraw_watcher
+from . import aec, evdev_watcher, executor, hidraw_watcher, lva
 
 _LOG = logging.getLogger(__name__)
 
@@ -168,7 +168,17 @@ async def _startup_audio_guardian(config: Config, already_applied: bool) -> None
             return
 
 
-def _make_tasks(devices: DeviceSet, config: Config) -> list[asyncio.Task]:
+def _make_tasks(
+    devices: DeviceSet, config: Config, lva_client: "lva.LVAClient | None" = None
+) -> list[asyncio.Task]:
+    """
+    Build the watcher tasks whose death means the device went away.
+
+    Only hardware watchers belong in here: the caller waits on this list with
+    FIRST_COMPLETED and reads any finished task as an unplug, so anything that
+    can legitimately end (the LVA client, the startup guardian) has to be run
+    beside it rather than in it.
+    """
     tasks = []
     loop = asyncio.get_event_loop()
 
@@ -181,7 +191,10 @@ def _make_tasks(devices: DeviceSet, config: Config) -> list[asyncio.Task]:
 
     if devices.volume_evdev:
         tasks.append(loop.create_task(
-            _wrap(evdev_watcher.watch(devices.volume_evdev, "volume", config), "volume"),
+            _wrap(
+                evdev_watcher.watch(devices.volume_evdev, "volume", config, lva_client),
+                "volume",
+            ),
             name="volume"
         ))
     else:
@@ -189,7 +202,10 @@ def _make_tasks(devices: DeviceSet, config: Config) -> list[asyncio.Task]:
 
     if devices.mute_evdev:
         tasks.append(loop.create_task(
-            _wrap(evdev_watcher.watch(devices.mute_evdev, "mute", config), "mute"),
+            _wrap(
+                evdev_watcher.watch(devices.mute_evdev, "mute", config, lva_client),
+                "mute",
+            ),
             name="mute"
         ))
     else:
@@ -248,26 +264,37 @@ async def run(config_path: str, reload_event: asyncio.Event) -> None:
             continue
 
         _LOG.info("Device found: %s", devices)
+        loop = asyncio.get_event_loop()
         initial_ok = await _apply_startup_audio(config)
-        guardian_task = asyncio.get_event_loop().create_task(
+        guardian_task = loop.create_task(
             _startup_audio_guardian(config, initial_ok), name="audio_guardian"
         )
-        tasks = _make_tasks(devices, config)
+
+        # Side tasks: they may end on their own without meaning the device is
+        # gone, so they are cancelled with the watchers but never waited on
+        # alongside them.
+        side_tasks = [guardian_task]
+        lva_client = lva.LVAClient(config) if config.lva_enabled else None
+        if lva_client is not None:
+            side_tasks.append(loop.create_task(lva_client.run(), name="lva"))
+
+        tasks = _make_tasks(devices, config, lva_client)
 
         if not tasks:
             _LOG.error("No device nodes could be opened — check permissions")
+            for t in side_tasks:
+                t.cancel()
             await asyncio.sleep(5)
             continue
 
         # Run until a watcher dies (device gone) or reload is requested
-        reload_task = asyncio.get_event_loop().create_task(reload_event.wait(), name="reload")
+        reload_task = loop.create_task(reload_event.wait(), name="reload")
         all_tasks = tasks + [reload_task]
 
         done, pending = await asyncio.wait(all_tasks, return_when=asyncio.FIRST_COMPLETED)
 
-        # Cancel everything still running (including the volume guardian)
-        guardian_task.cancel()
-        for t in list(pending) + [guardian_task]:
+        # Cancel everything still running, side tasks included
+        for t in list(pending) + side_tasks:
             t.cancel()
             try:
                 await t

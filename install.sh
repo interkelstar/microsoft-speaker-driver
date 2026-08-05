@@ -30,8 +30,11 @@ echo "    User speakerctl in groups: input, plugdev, audio"
 echo "==> Installing Python dependencies..."
 VENV=/usr/lib/speakerctl-venv
 python3.11 -m venv "$VENV"
-"$VENV/bin/pip" install --quiet evdev pyudev
-echo "    evdev, pyudev installed in $VENV"
+# websockets is only needed for [lva] sync, but is installed unconditionally:
+# the daemon imports it lazily and runs without it, and a venv that silently
+# lacks it turns a config change into a mystery.
+"$VENV/bin/pip" install --quiet evdev pyudev websockets
+echo "    evdev, pyudev, websockets installed in $VENV"
 
 # ── Daemon ──────────────────────────────────────────────────────────────────
 echo "==> Installing daemon..."

@@ -30,6 +30,25 @@ mic_percent = 85
 # sink_name = "aec_speaker"
 # method = "webrtc"
 
+[lva]
+# Keep volume and mute in step with a linux-voice-assistant running on this
+# host, through its peripheral WebSocket API. Without this the speaker's
+# buttons and the assistant each have their own idea of both.
+#
+# With sync_volume on, the volume buttons stop driving the local mixer and
+# ask the assistant to change its own level instead — otherwise one press
+# would attenuate twice, once in software and once in hardware, and the
+# hardware half would also desync echo cancellation's playback reference.
+# If the assistant is unreachable the buttons fall back to the mixer, so
+# they never go dead.
+#
+# With sync_mute on, the hardware mute button tells the assistant, and a
+# mute from Home Assistant is applied back to the microphone.
+# enabled = true
+# url = "ws://127.0.0.1:6055"
+# sync_volume = true
+# sync_mute = true
+
 [volume_up]
 command = "amixer -c Speaker -M set 'PCM' 5%+"
 

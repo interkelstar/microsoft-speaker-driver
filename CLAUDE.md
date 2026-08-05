@@ -25,13 +25,37 @@ speakerctl/
 ├── discovery.py      # finds device nodes by VID/PID in sysfs
 ├── evdev_watcher.py  # volume + mute
 ├── hidraw_watcher.py # phone + teams
+├── aec.py            # loads module-echo-cancel into the desktop user's session
+├── lva.py            # peripheral-API client: volume/mute sync with the assistant
 └── executor.py       # runs shell commands via asyncio.create_subprocess_shell
 ```
+
+## Voice assistant sync (`[lva]`, off by default)
+
+`lva.py` holds a WebSocket to a local **linux-voice-assistant**'s peripheral API
+(`ws://127.0.0.1:6055`), so the buttons and the assistant share one idea of
+volume and mute.
+
+- **Volume is owned by the assistant, not the mixer.** With sync on, the volume
+  buttons send `volume_up`/`volume_down` instead of running `amixer`. Doing both
+  would attenuate twice, and the hardware half would also rescale what the
+  speaker emits *after* `module-echo-cancel` taps its playback reference,
+  forcing the adaptive filter to reconverge on every press.
+- **Buttons never go dead.** If the assistant is unreachable the press falls
+  back to the local mixer command.
+- **Mute syncs both ways**, but hardware wins on connect: a stale remote "not
+  muted" must never silently reopen a microphone the user muted by hand.
+- The `Headset` control is a **capture** switch (`cswitch`, no `pswitch`) —
+  the tokens are `cap`/`nocap`; `amixer set Headset mute` exits 1.
+- The peripheral API has **no authentication**. Run the assistant with
+  `--peripheral-host 127.0.0.1` so it is not an open control surface on the LAN.
 
 ## Key facts
 
 - **Python 3.11+** required (for `tomllib`)
-- **Dependencies**: `evdev`, `pyudev` (installed in venv by install.sh)
+- **Dependencies**: `evdev`, `pyudev`, `websockets` (installed in venv by install.sh).
+  `websockets` is imported lazily — an older venv without it disables `[lva]`
+  sync and logs why, rather than crash-looping the daemon.
 - Device discovery by **VID/PID** (`045e:083e`), never by name string
 - Mute/volume evdev nodes distinguished by LED capability + key bits
 - Unplug: watcher raises `OSError` → supervisor waits for udev reconnect → restarts watchers

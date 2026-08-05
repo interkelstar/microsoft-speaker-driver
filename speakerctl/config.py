@@ -26,6 +26,10 @@ class Config:
     aec_source_name: str = "aec_mic"
     aec_sink_name: str = "aec_speaker"
     aec_method: str = "webrtc"
+    lva_enabled: bool = False
+    lva_url: str = "ws://127.0.0.1:6055"
+    lva_sync_volume: bool = True
+    lva_sync_mute: bool = True
 
 
 def load_config(path: str | Path) -> Config:
@@ -45,6 +49,7 @@ def load_config(path: str | Path) -> Config:
 
     startup = data.get("startup", {})
     aec = data.get("aec", {})
+    lva = data.get("lva", {})
 
     return Config(
         vid=device.get("vid", "045e"),
@@ -62,4 +67,8 @@ def load_config(path: str | Path) -> Config:
         aec_source_name=aec.get("source_name", "aec_mic"),
         aec_sink_name=aec.get("sink_name", "aec_speaker"),
         aec_method=aec.get("method", "webrtc"),
+        lva_enabled=bool(lva.get("enabled", False)),
+        lva_url=lva.get("url", "ws://127.0.0.1:6055"),
+        lva_sync_volume=bool(lva.get("sync_volume", True)),
+        lva_sync_mute=bool(lva.get("sync_mute", True)),
     )
