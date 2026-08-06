@@ -25,7 +25,10 @@ reconverge against a reference that no longer matches the room. Volume
 buttons therefore report intent ("up", "down") and let the assistant own the
 level; the hardware mixer stays where startup put it.
 
-Mute is a plain boolean with no such caveat, and is synced both ways.
+Mute is synced both ways, but it is not the simple boolean it looks like --
+the speaker mutes in its own firmware and nothing on the host reports it, so
+the state has to be measured from the audio. See CLAUDE.md and
+evdev_watcher.read_mute_state().
 """
 from __future__ import annotations
 
@@ -131,7 +134,7 @@ class LVAClient:
         """
         if not self._config.lva_sync_mute:
             return
-        muted = await evdev_watcher.read_mute_state(self._config.alsa_card)
+        muted = await evdev_watcher.read_mute_state(self._config)
         if muted is None:
             return
         self._muted = muted
@@ -206,8 +209,23 @@ class LVAClient:
             )
             return
 
+        # websockets logs a ping/pong pair at DEBUG every 20s. Left alone that
+        # is ~26k journal lines a day, which buries the handful of lines the
+        # daemon actually emits. Its INFO and above stay.
+        logging.getLogger("websockets").setLevel(logging.INFO)
+
+        synced = [
+            name for name, on in (
+                ("volume", self._config.lva_sync_volume),
+                ("mute", self._config.lva_sync_mute),
+            ) if on
+        ]
+        if not synced:
+            _LOG.warning("[lva] enabled but neither volume nor mute is synced")
+            return
+
         url = self._config.lva_url
-        _LOG.info("[lva] syncing volume and mute with %s", url)
+        _LOG.info("[lva] syncing %s with %s", " and ".join(synced), url)
 
         while True:
             try:

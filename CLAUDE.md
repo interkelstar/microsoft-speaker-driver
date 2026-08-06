@@ -9,11 +9,36 @@ A userspace driver that makes the **Microsoft Modern USB-C Speaker** (VID/PID `0
 | Button | Source | Action |
 |---|---|---|
 | Volume Up / Down | evdev (`KEY_VOLUMEUP` / `KEY_VOLUMEDOWN`) | `amixer -M set PCM ±5%` |
-| Mute | evdev (`KEY_MICMUTE`) — kernel toggles ALSA, daemon reports state | `$STATE=muted\|unmuted` passed to script |
+| Mute | evdev (`KEY_MICMUTE`) — firmware mutes, daemon measures the result | `$STATE=muted\|unmuted` passed to script |
 | Phone | hidraw report `\x05\x01\x00` | configurable script |
 | Teams | hidraw report `\x9b\x01` | configurable script |
 
 Phone and Teams come through hidraw because evdev drops `BTN_0` events unreliably.
+
+## The mute button is not what it looks like (measured 2026-08-06)
+
+Every obvious assumption about it is wrong, so do not "simplify" this back:
+
+- **The speaker mutes in its own firmware.** Nothing on the host reflects that.
+  The `Headset` capture switch reads `[on]` on *both* sides of a transition, no
+  other mixer control moves, evdev's `LED_MUTE` stays inactive, and the HID
+  reports encode "button pressed", not "now muted".
+- **`Headset` is write-authoritative but read-blind.** Writing `nocap` really
+  silences the mic (peak 0) and lights the LED; writing `cap` really unsilences
+  it *and clears a firmware mute, LED included*. Reading it tells you nothing.
+  It is also a **capture** switch — the tokens are `cap`/`nocap`; `amixer set
+  Headset mute` exits 1.
+- **So state is measured, not read**: `read_mute_state()` records ~1 s of audio
+  and calls it muted below a peak of 8. Muted reads 1 (0 under an ALSA mute);
+  live in a quiet room never measured below 50.
+- **Never mirror that measurement back into `Headset`.** It self-locks: the next
+  press clears the firmware mute, `nocap` remains, the probe still hears silence,
+  and the daemon writes `nocap` again — muted forever.
+- **evdev drops events.** `async_read_loop` raises `InvalidStateError` when a
+  batch lands before the previous one is consumed, and *loses that event* — a
+  mute press was observed lighting the LED, silencing the mic, arriving on
+  hidraw, and leaving no evdev trace at all. `_events()` reads the descriptor
+  with `add_reader` instead, like `hidraw_watcher` already did.
 
 ## Architecture
 

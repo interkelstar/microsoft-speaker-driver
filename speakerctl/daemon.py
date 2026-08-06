@@ -119,6 +119,7 @@ async def _apply_startup_audio(config: Config) -> bool:
                 config.aec_source_name,
                 config.aec_sink_name,
                 config.aec_method,
+                config.aec_args,
             )
 
     if config.startup_speaker_percent is not None:

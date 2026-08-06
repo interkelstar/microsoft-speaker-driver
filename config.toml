@@ -29,6 +29,14 @@ mic_percent = 85
 # source_name = "aec_mic"
 # sink_name = "aec_speaker"
 # method = "webrtc"
+# Extra arguments passed to the AEC engine. webrtc enables analog gain
+# control by default, which drives the *hardware* capture volume up on its
+# own -- it silently overrode [startup] mic_percent, climbing 85% -> 100%
+# within hours. Turn both off to keep the level where startup put it, which
+# is what wake-word thresholds are tuned against. Naming *both* gain-control
+# keys makes the module refuse to load ("pick only one"), and the digital one
+# is off by default anyway, so disabling the analog one is the whole fix.
+# args = "analog_gain_control=0"
 
 [lva]
 # Keep volume and mute in step with a linux-voice-assistant running on this

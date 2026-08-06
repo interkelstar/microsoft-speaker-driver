@@ -82,9 +82,11 @@ echo "==> Installing sudoers rule for pactl..."
 cat > /etc/sudoers.d/speakerctl << 'EOF'
 # Allow the speakerctl daemon to run pactl as any user, without a password.
 # Used only when [startup] pulse_user is configured, so the daemon can adjust
-# PulseAudio sink/source volumes in that user's session. SETENV is required
-# so the daemon can pass XDG_RUNTIME_DIR to reach the user's pulse socket.
-speakerctl ALL=(ALL) NOPASSWD: SETENV: /usr/bin/pactl
+# PulseAudio sink/source volumes in that user's session, and read one second
+# of microphone audio to tell muted from live -- the speaker mutes in its own
+# firmware, and nothing else on the host reflects that. SETENV is required so
+# the daemon can pass XDG_RUNTIME_DIR to reach the user's pulse socket.
+speakerctl ALL=(ALL) NOPASSWD: SETENV: /usr/bin/pactl, /usr/bin/parec
 EOF
 chmod 0440 /etc/sudoers.d/speakerctl
 echo "    /etc/sudoers.d/speakerctl installed"

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import shlex
 from asyncio.subprocess import PIPE
 from typing import TYPE_CHECKING, Literal, Optional
 
@@ -31,27 +32,79 @@ KEYDOWN = 1
 KEYREPEAT = 2
 
 
-async def read_mute_state(alsa_card: str) -> Optional[bool]:
+# Peak sample value below which the microphone is considered muted. A muted
+# mic reads exactly 1 (digital silence plus a dither bit); a live one in a
+# quiet room never measured below 50 across dozens of samples. Anywhere in
+# between is comfortable.
+_SILENCE_PEAK = 8
+_PROBE_SECONDS = 1
+_PROBE_RATE = 16000
+
+
+def _probe_cmd(pulse_user: str) -> str:
     """
-    Read the Headset capture switch: True when the mic is muted, None when it
-    could not be read. The kernel toggles this itself on a button press, so
-    this is a read-back of what already happened, not a decision.
+    Build a command that exits 0 if the microphone is silent, 1 if it is live.
+
+    The exit code *is* the answer, because executor.run only hands back a
+    return code — which suits a yes/no question and keeps the captured audio
+    inside the pipe, measured and discarded, never written anywhere.
+
+    parec is stopped by `head` closing the pipe under it, not by a signal.
+    It runs behind sudo, and signals do not reliably reach through: an
+    earlier version backgrounded it and killed $!, which was sudo's pid and
+    left the real parec recording forever — seven of them accumulated in one
+    session. SIGPIPE needs nobody's cooperation. The outer timeout is only a
+    backstop for a source that never produces a sample at all, in which case
+    nothing would ever close the pipe.
     """
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            "amixer", "-c", alsa_card, "sget", "Headset",
-            stdout=PIPE, stderr=PIPE,
-        )
-        stdout, _ = await proc.communicate()
-        return b"[on]" not in stdout
-    except Exception as exc:
-        _LOG.warning("Could not read ALSA mute state: %s", exc)
+    uid = f"$(id -u {pulse_user})"
+    sudo = f"sudo -n -u {pulse_user} "
+    xdg = f'XDG_RUNTIME_DIR="/run/user/{uid}"'
+    want_bytes = _PROBE_RATE * 2 * _PROBE_SECONDS
+    script = (
+        f'SRC=$({sudo}{xdg} pactl list sources short '
+        f'| awk \'/Modern_USB-C_Speaker/ && !/monitor|echo-cancel/ {{print $2; exit}}\'); '
+        f'if [ -z "$SRC" ]; then exit 2; fi; '
+        f'{sudo}{xdg} parec --device="$SRC" --format=s16le '
+        f'--rate={_PROBE_RATE} --channels=1 --raw --latency-msec=100 '
+        f'| head -c {want_bytes} '
+        f'| python3 -c \'import sys,struct;d=sys.stdin.buffer.read();n=len(d)//2;'
+        f'sys.exit(2 if n==0 else (0 if max(abs(x) for x in '
+        f'struct.unpack(f"<{{n}}h",d[:n*2]))<={_SILENCE_PEAK} else 1))\''
+    )
+    return f"timeout -s KILL {_PROBE_SECONDS + 4} sh -c {shlex.quote(script)}"
+
+
+async def read_mute_state(config: Config) -> Optional[bool]:
+    """
+    Decide whether the microphone is muted by listening to it.
+
+    This device mutes inside its own firmware. Measured directly, *nothing*
+    on the host reflects that: the Headset capture switch reads [on] on both
+    sides of a transition, no other mixer control moves, evdev's LED_MUTE
+    stays inactive, and the HID reports encode "button pressed" rather than
+    "now muted". Meanwhile the samples go from ~2400 peak to exactly 1. The
+    audio itself is the only honest source of truth there is, so that is what
+    we read.
+
+    Returns None when it could not be measured, which callers must treat as
+    "unknown" rather than as either state.
+    """
+    pulse_user = config.startup_pulse_user
+    if not pulse_user:
         return None
+    rc = await executor.run(_probe_cmd(pulse_user), quiet=True)
+    if rc == 0:
+        return True
+    if rc == 1:
+        return False
+    _LOG.warning("Could not measure microphone state (probe exited %s)", rc)
+    return None
 
 
-async def _get_mute_state(alsa_card: str) -> str:
+async def _get_mute_state(config: Config) -> str:
     """The same reading, as the word passed to the mute script's $STATE."""
-    muted = await read_mute_state(alsa_card)
+    muted = await read_mute_state(config)
     if muted is None:
         return "unknown"
     return "muted" if muted else "unmuted"
@@ -75,6 +128,48 @@ async def _volume_step(
     await executor.run(config.volume_up.command if up else config.volume_down.command)
 
 
+async def _events(device: "evdev.InputDevice"):
+    """
+    Yield input events, reading the descriptor the same way hidraw_watcher
+    does instead of using evdev's own async_read_loop.
+
+    async_read_loop settles one future per batch and raises InvalidStateError
+    when the next batch lands before the previous one has been consumed. The
+    traceback is noisy, but the real cost is silent: the event that triggered
+    it is **dropped**. Observed directly — a mute press that lit the LED,
+    silenced the microphone and arrived on hidraw left no mute line in the
+    log at all, only the traceback. This repo already reads phone and Teams
+    from hidraw for the same class of unreliability; this makes the evdev
+    path just as literal about it.
+
+    OSError from a vanished device is re-raised in the consuming task, which
+    is what the supervisor turns into "device gone".
+    """
+    loop = asyncio.get_running_loop()
+    queue: asyncio.Queue = asyncio.Queue()
+    failure: list[BaseException] = []
+
+    def _drain() -> None:
+        try:
+            for event in device.read():
+                queue.put_nowait(event)
+        except BlockingIOError:
+            pass
+        except OSError as exc:
+            failure.append(exc)
+            queue.put_nowait(None)  # wake the consumer so it can re-raise
+
+    loop.add_reader(device.fileno(), _drain)
+    try:
+        while True:
+            event = await queue.get()
+            if event is None:
+                raise failure[0]
+            yield event
+    finally:
+        loop.remove_reader(device.fileno())
+
+
 async def watch(
     path: str,
     role: Role,
@@ -88,7 +183,7 @@ async def watch(
     device = evdev.InputDevice(path)
     _LOG.info("Watching %s (%s) for %s events", path, device.name, role)
 
-    async for event in device.async_read_loop():
+    async for event in _events(device):
         if event.type != EV_KEY:
             continue
 
@@ -107,8 +202,8 @@ async def watch(
         elif role == "mute":
             if event.value != KEYDOWN or code != KEY_MICMUTE:
                 continue
-            await asyncio.sleep(0.05)  # wait for snd_usb_audio to update ALSA state
-            state = await _get_mute_state(config.alsa_card)
+            await asyncio.sleep(0.25)  # let the firmware settle before listening
+            state = await _get_mute_state(config)
             _LOG.info("mute → %s", state)
             await executor.run(config.mute.command, extra_env={"STATE": state})
             # Purely additive: the kernel has already muted the mic, this only
