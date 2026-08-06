@@ -89,6 +89,17 @@ volume and mute.
 - Example scripts in `examples/` are installed to `/etc/speakerctl/scripts/`
 - Startup volumes optionally applied to both ALSA (`amixer -M`) and PulseAudio (`pactl` via sudoers, when `[startup] pulse_user` is set)
 
+## Tests
+
+```bash
+python3 tests/test_lva.py     # needs `websockets`; no hardware, no assistant
+```
+
+Covers the LVA client against a stand-in peripheral API server: the echo guard,
+one-way connect reconciliation, the `nocap` token, reconnect, the offline
+fallback, and degrading without `websockets`. The hardware paths (mute probe,
+evdev reading) are not covered — those were verified on the device.
+
 ## Installation
 
 ```bash
