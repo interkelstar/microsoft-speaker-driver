@@ -124,10 +124,22 @@ async def _apply_startup_audio(config: Config) -> bool:
 
     if config.startup_speaker_percent is not None:
         pct = config.startup_speaker_percent
-        alsa_ok = await _apply_alsa_percent(config.alsa_card, "PCM", pct)
+        # The two stages can be set apart on purpose. This speaker gates its own
+        # microphone while it plays, and the gate keys on how loud it ends up
+        # being — so the useful trick is a quiet digital level into a louder
+        # amplifier, which lands under the gate at the same loudness in the room.
+        alsa_pct = (
+            config.startup_speaker_alsa_percent
+            if config.startup_speaker_alsa_percent is not None
+            else pct
+        )
+        alsa_ok = await _apply_alsa_percent(config.alsa_card, "PCM", alsa_pct)
         pulse_ok = await _apply_pulse_percent(pulse_user, "sink", pct) if pulse_user else True
         if alsa_ok and pulse_ok:
-            _LOG.info("Set speaker volume to %d%%", pct)
+            if alsa_pct == pct:
+                _LOG.info("Set speaker volume to %d%%", pct)
+            else:
+                _LOG.info("Set speaker volume to %d%% digital / %d%% amplifier", pct, alsa_pct)
         ok = ok and alsa_ok and pulse_ok
 
     if config.startup_mic_percent is not None:

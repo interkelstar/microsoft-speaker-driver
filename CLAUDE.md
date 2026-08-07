@@ -34,6 +34,22 @@ Every obvious assumption about it is wrong, so do not "simplify" this back:
 - **Never mirror that measurement back into `Headset`.** It self-locks: the next
   press clears the firmware mute, `nocap` remains, the probe still hears silence,
   and the daemon writes `nocap` again — muted forever.
+- **The device gates its own microphone while it plays.** It is a speakerphone
+  and does half-duplex in firmware: above a threshold the mic drops ~40 dB for
+  the duration of playback, which makes barge-in impossible. Measured with a
+  noise burst, three to five repeats per point:
+
+  | digital (sink) | amplifier (PCM) | total | mic ducking |
+  |---|---|---|---|
+  | 60 % | 57 % | -26.4 dB | **-40 dB** (shut) |
+  | 40 % | 90 % | -26.5 dB | -15 to -38 dB (erratic) |
+  | **40 %** | **75 %** | **-30.6 dB** | **-0.3 to -7 dB** ✅ |
+  | 40 % | 57 % | -37.0 dB | ~0 dB |
+
+  Hence `[startup] speaker_alsa_percent`: a quiet digital level into a louder
+  amplifier stays under the gate at nearly the same loudness. Note LVA's own
+  software volume is a third stage *before* the sink, so turning it up can push
+  the total back over the gate.
 - **evdev drops events.** `async_read_loop` raises `InvalidStateError` when a
   batch lands before the previous one is consumed, and *loses that event* — a
   mute press was observed lighting the LED, silencing the mic, arriving on

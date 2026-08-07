@@ -20,6 +20,7 @@ class Config:
     teams: ButtonConfig
     phone: ButtonConfig
     startup_speaker_percent: int | None = None
+    startup_speaker_alsa_percent: int | None = None
     startup_mic_percent: int | None = None
     startup_pulse_user: str | None = None
     aec_enabled: bool = False
@@ -62,6 +63,7 @@ def load_config(path: str | Path) -> Config:
         teams=btn("teams"),
         phone=btn("phone"),
         startup_speaker_percent=startup.get("speaker_percent"),
+        startup_speaker_alsa_percent=startup.get("speaker_alsa_percent"),
         startup_mic_percent=startup.get("mic_percent"),
         startup_pulse_user=startup.get("pulse_user"),
         aec_enabled=bool(aec.get("enabled", False)),
