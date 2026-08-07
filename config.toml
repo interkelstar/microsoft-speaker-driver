@@ -12,10 +12,7 @@ alsa_card = "Speaker"
 [startup]
 # Volume levels (0-100%) applied on daemon start and after each reconnect.
 # Comment out a line to leave that level untouched.
-# 40, not 60: this speaker gates its own microphone shut while it plays, and
-# above roughly this level the mic drops ~40 dB for the whole utterance, so the
-# assistant cannot be interrupted -- it simply cannot hear you. See CLAUDE.md.
-speaker_percent = 40
+speaker_percent = 60
 # Optional override for the ALSA PCM control. Rarely useful: with PulseAudio in
 # charge, it rewrites this control from the sink volume, so a value set apart
 # from speaker_percent does not survive. Left here for hosts without PulseAudio.

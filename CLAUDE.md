@@ -34,29 +34,21 @@ Every obvious assumption about it is wrong, so do not "simplify" this back:
 - **Never mirror that measurement back into `Headset`.** It self-locks: the next
   press clears the firmware mute, `nocap` remains, the probe still hears silence,
   and the daemon writes `nocap` again — muted forever.
-- **The device gates its own microphone while it plays.** It is a speakerphone
-  and does half-duplex in firmware: above a loudness threshold the mic drops
-  ~40 dB for the whole of playback, which makes barge-in impossible — nothing
-  reaches the wake-word models at all. Measured with a noise burst, three to
-  five repeats per point, the hardware sink volume is what decides it:
-
-  | sink | mic ducking |
-  |---|---|
-  | 60 % | -15 to -40 dB (shut) |
-  | **40 %** | **-1 to -6 dB** (open) |
-
-  So the speaker runs at `speaker_percent = 40`, about 10 dB quieter than
-  before. There is no way around the loudness cost: the vendor `Extension Unit`
-  switch changes nothing, and **the ALSA `PCM` control is not a second, separate
-  stage** — PulseAudio owns it and rewrites it from the sink volume, so setting
-  them apart does not stick.
-
-  Two things must also hold, or the sink drifts back up and the gate returns:
-  `flat-volumes = no` in `/etc/pulse/daemon.conf` (otherwise a loud stream drags
-  the device volume with it — this is what silently undid the setting), and the
-  assistant's own software volume kept moderate, since it is a real stage ahead
-  of the sink.
-
+- **The microphone does not hear the speaker, and that is the device's doing.**
+  Measured during playback: the speaker's monitor at -25 dBFS while the raw
+  microphone sits at -85 dBFS, and a person talking in the room at the same
+  moment comes through at -28 dBFS. So it subtracts its own output and passes
+  everything else. Two consequences worth knowing: the host's
+  `module-echo-cancel` has almost nothing left to remove (it measures ~0 dB of
+  cancellation, which is not a fault), and **the assistant cannot trigger its
+  own wake or stop words** — the models see silence throughout its own speech.
+- **At high playback levels the microphone floor collapses** — at a sink volume
+  of 60 % it drops to about -82 dBFS during playback while the idle room floor
+  was -40, and at 40 % it does not. Reproduced across several runs. What it
+  does to a *loud* voice was never established, and it turned out **not** to be
+  what blocked barge-in, so do not lower the volume for it: an earlier revision
+  of this file claimed a firmware "gate" made interruption impossible and set
+  `speaker_percent = 40` on that basis. That was wrong — see BACKLOG.md V10.
 - **evdev drops events.** `async_read_loop` raises `InvalidStateError` when a
   batch lands before the previous one is consumed, and *loses that event* — a
   mute press was observed lighting the LED, silencing the mic, arriving on
