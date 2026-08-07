@@ -12,7 +12,12 @@ alsa_card = "Speaker"
 [startup]
 # Volume levels (0-100%) applied on daemon start and after each reconnect.
 # Comment out a line to leave that level untouched.
-speaker_percent = 60
+#
+# Leave the sink wide open. Once [lva] sync_volume is on, the assistant's own
+# player volume is the control the buttons and the Home Assistant slider both
+# drive, so anything less than 100 here is a ceiling the user cannot see and
+# cannot lift — it silently costs them that much of the speaker's range.
+speaker_percent = 100
 # Optional override for the ALSA PCM control. Rarely useful: with PulseAudio in
 # charge, it rewrites this control from the sink volume, so a value set apart
 # from speaker_percent does not survive. Left here for hosts without PulseAudio.

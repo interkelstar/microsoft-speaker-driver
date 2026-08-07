@@ -49,6 +49,16 @@ Every obvious assumption about it is wrong, so do not "simplify" this back:
   what blocked barge-in, so do not lower the volume for it: an earlier revision
   of this file claimed a firmware "gate" made interruption impossible and set
   `speaker_percent = 40` on that basis. That was wrong — see BACKLOG.md V10.
+- **Do not use `speaker_percent` as the listening volume.** With `[lva]`
+  `sync_volume` on, the buttons and the Home Assistant slider both drive the
+  assistant's *player* volume, and the sink sits underneath as a fixed
+  attenuator. At 60 % that is -13.3 dB the user can never recover: they reach
+  the top of the only control they have and the speaker is still at a fifth of
+  its amplitude. Keep the sink at 100 % and let the player be the whole range.
+  Note the two scales differ — PulseAudio's percentage is its own cubic curve
+  (60 % = -13.3 dB, read the dB figure from `pactl`, never the percentage), and
+  mpv's volume is *also* cubic in amplitude, so translating a level from one to
+  the other means going through gain, not through percent.
 - **evdev drops events.** `async_read_loop` raises `InvalidStateError` when a
   batch lands before the previous one is consumed, and *loses that event* — a
   mute press was observed lighting the LED, silencing the mic, arriving on
