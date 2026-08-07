@@ -12,15 +12,14 @@ alsa_card = "Speaker"
 [startup]
 # Volume levels (0-100%) applied on daemon start and after each reconnect.
 # Comment out a line to leave that level untouched.
+# 40, not 60: this speaker gates its own microphone shut while it plays, and
+# above roughly this level the mic drops ~40 dB for the whole utterance, so the
+# assistant cannot be interrupted -- it simply cannot hear you. See CLAUDE.md.
 speaker_percent = 40
-# Optional: set the device's own amplifier apart from the digital level above.
-# This speaker gates its microphone shut (-40 dB) while it plays, and the gate
-# keys on how loud it ends up in the room -- so a quiet digital level feeding a
-# louder amplifier lands under the gate at nearly the same loudness. Measured:
-# 60/60 ducks the mic by 40 dB; 40 digital + 75 amplifier ducks it by ~5 dB and
-# is only 4 dB quieter overall. Without this, the assistant cannot be
-# interrupted while it speaks -- it simply cannot hear you.
-speaker_alsa_percent = 75
+# Optional override for the ALSA PCM control. Rarely useful: with PulseAudio in
+# charge, it rewrites this control from the sink volume, so a value set apart
+# from speaker_percent does not survive. Left here for hosts without PulseAudio.
+# speaker_alsa_percent = 75
 mic_percent = 85
 # If set, also apply the same levels to this user's PulseAudio sink/source
 # (ALSA and PulseAudio keep independent volumes — most desktop UIs show the
