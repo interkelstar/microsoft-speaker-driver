@@ -44,6 +44,15 @@ cp -r speakerctl/ "$VENV/lib/python3.11/site-packages/"
 
 cat > /usr/local/bin/speakerctl << 'EOF'
 #!/bin/bash
+# Ignore SIGHUP before exec'ing Python. systemd's ExecReload sends it, and for
+# the first fraction of a second the process is still starting the interpreter
+# and importing evdev/pyudev/websockets -- Python code cannot install a handler
+# that early, and the default action is to terminate. A reload issued right
+# after a restart, which is exactly what a deploy script does, would kill the
+# daemon and leave the buttons dead with no error anywhere.
+# An ignored disposition survives exec, and Python's own signal.signal() later
+# replaces it with the real reload handler.
+trap '' HUP
 exec /usr/lib/speakerctl-venv/bin/python3.11 -m speakerctl "$@"
 EOF
 chmod +x /usr/local/bin/speakerctl

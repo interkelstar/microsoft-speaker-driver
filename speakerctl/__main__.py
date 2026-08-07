@@ -10,10 +10,20 @@ import logging
 import signal
 import sys
 
-from . import __version__
-from .daemon import run
+# Before anything heavy is imported. Python's default action for SIGHUP is to
+# terminate, systemd's ExecReload sends exactly that, and the real handler
+# cannot be installed until the event loop exists — with evdev, pyudev and
+# websockets loading in between. A reload issued in that window killed the
+# daemon outright, which looks like a crash and leaves the buttons dead;
+# restarting and reloading a moment later is what any deploy script does.
+# Losing a reload during start-up costs nothing: the config is read anyway.
+signal.signal(signal.SIGHUP, signal.SIG_IGN)
+
+from . import __version__  # noqa: E402
+from .daemon import run  # noqa: E402
 
 DEFAULT_CONFIG = "/etc/speakerctl/config.toml"
+
 
 
 def main() -> None:
