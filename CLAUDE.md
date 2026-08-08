@@ -8,12 +8,27 @@ A userspace driver that makes the **Microsoft Modern USB-C Speaker** (VID/PID `0
 
 | Button | Source | Action |
 |---|---|---|
-| Volume Up / Down | evdev (`KEY_VOLUMEUP` / `KEY_VOLUMEDOWN`) | `amixer -M set PCM ±5%` |
+| Volume Up / Down | evdev (`KEY_VOLUMEUP` / `KEY_VOLUMEDOWN`) | ask the assistant to step its volume; `amixer -M set PCM ±5%` only when it is not there |
 | Mute | evdev (`KEY_MICMUTE`) — firmware mutes, daemon measures the result | `$STATE=muted\|unmuted` passed to script |
 | Phone | hidraw report `\x05\x01\x00` | configurable script |
-| Teams | hidraw report `\x9b\x01` | configurable script |
+| Teams | hidraw report `\x9b\x01` | mid-answer: stop the assistant; otherwise the configured script |
 
 Phone and Teams come through hidraw because evdev drops `BTN_0` events unreliably.
+
+A button with `interrupts_playback = true` has two meanings, chosen by what the
+speaker is doing. Quiet, the press runs `command` as always — here that opens a
+conversation through a Home Assistant webhook. Mid-answer, or over a ringing
+timer, it sends `stop_pipeline` instead, which is the same `satellite.stop()`
+the stop word calls. Without the split, pressing it during an answer ended the
+answer and immediately asked what it could help with, which is not what someone
+reaching for a button mid-sentence wants. It gives the user a second way to
+interrupt that does not have to be heard over the speaker — worth having, since
+the stop word measures 0.36–0.99 against a 0.3 threshold and takes ~1.5 s.
+
+Playback state comes from `tts_speaking` / `timer_ringing` against
+`tts_finished` / `idle` / `pipeline_error`, and is assumed quiet on connect —
+the snapshot does not carry it, so reconnecting mid-answer costs one press.
+`journalctl -u speakerctl | grep "assistant is"` shows the transitions.
 
 ## The mute button is not what it looks like (measured 2026-08-06)
 

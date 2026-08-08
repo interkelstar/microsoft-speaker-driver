@@ -169,7 +169,7 @@ def _make_tasks(
 
     if devices.hidraw:
         tasks.append(loop.create_task(
-            _wrap(hidraw_watcher.watch(devices.hidraw, config), "hidraw"),
+            _wrap(hidraw_watcher.watch(devices.hidraw, config, lva_client), "hidraw"),
             name="hidraw"
         ))
     else:

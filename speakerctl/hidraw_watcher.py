@@ -10,9 +10,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from typing import Optional, TYPE_CHECKING
 
 from .config import Config, ButtonConfig
 from . import executor
+
+if TYPE_CHECKING:
+    from .lva import LVAClient
 
 _LOG = logging.getLogger(__name__)
 
@@ -21,7 +25,32 @@ TEAMS_MAGIC = b"\x9b\x01"
 READ_SIZE = 64
 
 
-async def watch(path: str, config: Config) -> None:
+async def handle_press(
+    name: str, cfg: ButtonConfig, lva_client: Optional["LVAClient"] = None
+) -> None:
+    """
+    What a press does, once it has survived debouncing.
+
+    A button marked as interrupting means one press, two meanings: cut the
+    answer off if there is one, otherwise do the configured thing. Without it
+    the only way to stop a long answer is to be heard over the speaker — and
+    pressing the button mid-answer used to end the answer and immediately open
+    a fresh conversation, asking what it could help with, which is not what
+    anyone reaching for a button mid-sentence wants.
+    """
+    _LOG.info("%s button pressed", name)
+
+    if cfg.interrupts_playback and lva_client is not None:
+        if await lva_client.interrupt_playback():
+            _LOG.info("%s button stopped the assistant", name)
+            return
+
+    await executor.run(cfg.command)
+
+
+async def watch(
+    path: str, config: Config, lva_client: Optional["LVAClient"] = None
+) -> None:
     """
     Async hidraw reader. Raises OSError if the device disappears (triggers
     reconnect in the daemon supervisor).
@@ -35,8 +64,7 @@ async def watch(path: str, config: Config) -> None:
             _LOG.debug("%s button debounced", name)
             return
         last_fire[name] = now
-        _LOG.info("%s button pressed", name)
-        await executor.run(cfg.command)
+        await handle_press(name, cfg, lva_client)
 
     fd = open(path, "rb", buffering=0)
     _LOG.info("Watching %s for phone + teams buttons", path)

@@ -53,6 +53,13 @@ _CMD_VOLUME_UP = "volume_up"
 _CMD_VOLUME_DOWN = "volume_down"
 _CMD_MUTE_MIC = "mute_mic"
 _CMD_UNMUTE_MIC = "unmute_mic"
+_CMD_STOP_PIPELINE = "stop_pipeline"
+
+# Events that say the speaker is making a noise the user might want to end.
+# Timer ringing is in here because the stop word ends that too, and a button
+# that opened a conversation over a ringing timer would be absurd.
+_NOISY_EVENTS = frozenset({"tts_speaking", "timer_ringing"})
+_QUIET_EVENTS = frozenset({"tts_finished", "idle", "pipeline_error"})
 
 _CONNECT_TIMEOUT = 5.0
 _RECONNECT_SECONDS = 5.0
@@ -89,6 +96,11 @@ class LVAClient:
         # it, which is what makes it usable as the echo guard in _apply_mute.
         self._muted: Optional[bool] = None
         self._volume: Optional[float] = None
+        # Whether the assistant is currently speaking or ringing. Assumed
+        # false on connect: the snapshot does not carry playback state, so a
+        # reconnect in the middle of an answer leaves this stale until the
+        # next event. The cost is one button press behaving as if idle.
+        self._noisy = False
 
     @property
     def connected(self) -> bool:
@@ -116,6 +128,23 @@ class LVAClient:
         if not self._config.lva_sync_volume:
             return False
         return await self._send(_CMD_VOLUME_UP if up else _CMD_VOLUME_DOWN)
+
+    async def interrupt_playback(self) -> bool:
+        """
+        End whatever the assistant is saying. True if there was something to end.
+
+        False means the caller should do whatever the button normally does —
+        the whole point is that the press falls through to opening a
+        conversation when the room is quiet.
+        """
+        if not self._noisy:
+            return False
+        if not await self._send(_CMD_STOP_PIPELINE):
+            return False
+        # Cleared here rather than waiting for the assistant to confirm, so a
+        # second press during the stop does not send a second command.
+        self._noisy = False
+        return True
 
     async def report_mute(self, muted: bool) -> bool:
         """Tell the assistant what the hardware mute button just did."""
@@ -211,6 +240,15 @@ class LVAClient:
         event = msg.get("event", "")
         data = msg.get("data") or {}
 
+        if event in _NOISY_EVENTS or event in _QUIET_EVENTS:
+            noisy = event in _NOISY_EVENTS
+            if noisy != self._noisy:
+                self._noisy = noisy
+                # Logged because it is otherwise invisible: it decides what a
+                # button press means, and nothing else reports it.
+                _LOG.debug("[lva] assistant is %s (%s)",
+                           "speaking" if noisy else "quiet", event)
+
         if event == "snapshot":
             _LOG.info(
                 "[lva] connected — assistant volume %s, mute %s",
@@ -284,4 +322,8 @@ class LVAClient:
                 _LOG.debug("[lva] disconnected (%s)", exc)
             finally:
                 self._ws = None
+                # A dropped socket means we stop hearing tts_finished, so
+                # anything else would leave the button convinced the assistant
+                # is still talking and swallowing presses forever.
+                self._noisy = False
             await asyncio.sleep(_RECONNECT_SECONDS)

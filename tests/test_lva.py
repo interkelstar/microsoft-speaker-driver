@@ -27,7 +27,7 @@ sys.modules.setdefault("evdev", _stub)
 
 from websockets.asyncio.server import serve  # noqa: E402
 
-from speakerctl import evdev_watcher, executor, lva, pulse  # noqa: E402
+from speakerctl import evdev_watcher, executor, hidraw_watcher, lva, pulse  # noqa: E402
 from speakerctl.config import ButtonConfig, Config  # noqa: E402
 
 PORT = 6155
@@ -157,6 +157,66 @@ async def main():
         no_pulse = lva.LVAClient(make_config())
         await no_pulse._apply_volume(0.4)
         check("leaves the sink alone with no PulseAudio user", ran == [], f"ran={ran}")
+
+        # ── the Teams button means two things ───────────────────────────────
+        teams = make_config().teams
+        teams.interrupts_playback = True
+        teams.command = "echo TEAMS_NORMAL"
+
+        received.clear()
+        ran.clear()
+        await hidraw_watcher.handle_press("teams", teams, client)
+        check("quiet: the button does its configured job",
+              ran == ["echo TEAMS_NORMAL"] and not received, f"ran={ran}")
+
+        await conns[0].send(json.dumps({"event": "tts_speaking", "data": {}}))
+        await asyncio.sleep(0.2)
+        received.clear()
+        ran.clear()
+        await hidraw_watcher.handle_press("teams", teams, client)
+        await asyncio.sleep(0.2)
+        check("speaking: the button stops the assistant instead",
+              ran == [] and received and received[-1]["command"] == "stop_pipeline",
+              f"ran={ran} received={received}")
+
+        received.clear()
+        ran.clear()
+        await hidraw_watcher.handle_press("teams", teams, client)
+        await asyncio.sleep(0.2)
+        check("a second press does not send stop twice",
+              ran == ["echo TEAMS_NORMAL"] and not received, f"ran={ran}")
+
+        await conns[0].send(json.dumps({"event": "tts_speaking", "data": {}}))
+        await asyncio.sleep(0.2)
+        await conns[0].send(json.dumps({"event": "tts_finished", "data": {}}))
+        await asyncio.sleep(0.2)
+        received.clear()
+        ran.clear()
+        await hidraw_watcher.handle_press("teams", teams, client)
+        check("after the answer ends the button opens a conversation again",
+              ran == ["echo TEAMS_NORMAL"] and not received, f"ran={ran}")
+
+        await conns[0].send(json.dumps({"event": "timer_ringing", "data": {}}))
+        await asyncio.sleep(0.2)
+        received.clear()
+        ran.clear()
+        await hidraw_watcher.handle_press("teams", teams, client)
+        await asyncio.sleep(0.2)
+        check("a ringing timer is silenced, not talked over",
+              received and received[-1]["command"] == "stop_pipeline", f"received={received}")
+
+        plain = make_config().teams
+        plain.command = "echo TEAMS_NORMAL"
+        await conns[0].send(json.dumps({"event": "tts_speaking", "data": {}}))
+        await asyncio.sleep(0.2)
+        received.clear()
+        ran.clear()
+        await hidraw_watcher.handle_press("teams", plain, client)
+        await asyncio.sleep(0.2)
+        check("a button not marked as interrupting is unaffected",
+              ran == ["echo TEAMS_NORMAL"] and not received, f"ran={ran}")
+        await conns[0].send(json.dumps({"event": "idle", "data": {}}))
+        await asyncio.sleep(0.2)
 
         hw_muted["v"] = True
         received.clear()

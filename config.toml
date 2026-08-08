@@ -79,6 +79,11 @@ command = "/etc/speakerctl/scripts/mute-notify.sh"
 
 [teams]
 command = "/etc/speakerctl/scripts/teams-button.sh"
+# While the assistant is speaking, this button ends the answer instead of
+# running `command` — the same thing the stop word does, but it does not have
+# to be heard over the speaker. When nothing is playing the press falls
+# through to `command` as usual. Needs [lva] enabled.
+interrupts_playback = true
 
 [phone]
 command = "/etc/speakerctl/scripts/phone-button.sh"

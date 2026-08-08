@@ -7,6 +7,11 @@ from pathlib import Path
 class ButtonConfig:
     command: str
     debounce_seconds: float = 0.0
+    # When the assistant is speaking, cut it off instead of running `command`.
+    # Gives one button two meanings, which is what makes it usable: idle it
+    # opens a conversation, mid-answer it ends one — the same thing the stop
+    # word does, without having to be heard over the speaker.
+    interrupts_playback: bool = False
 
 
 @dataclass
@@ -47,6 +52,7 @@ def load_config(path: str | Path) -> Config:
         return ButtonConfig(
             command=sec["command"],
             debounce_seconds=float(sec.get("debounce_seconds", 0.0)),
+            interrupts_playback=bool(sec.get("interrupts_playback", False)),
         )
 
     startup = data.get("startup", {})
