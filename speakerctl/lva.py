@@ -7,23 +7,29 @@ Assistant are the same act rather than two unrelated ones.
 
 Which gain stage owns the level
 -------------------------------
-The assistant applies volume in software, before its audio reaches
-PulseAudio. The buttons drive the hardware ALSA mixer, after. Letting both
-act on one press attenuates twice, so exactly one of them has to own the
-number — and it has to be the software one, because of where echo
-cancellation sits:
+There are two places the level could live — the assistant's software player
+and the PulseAudio sink — and applying it in both attenuates twice, so
+exactly one has to own it. It is the sink:
 
-    assistant (software volume) -> aec_speaker -> hardware sink (ALSA PCM)
-                                        ^
-                          module-echo-cancel taps its playback
-                          reference here, between the two stages
+    button ─┐
+    HA slider ─┼→ assistant's volume (a number, no gain) ─→ pactl set-sink-volume
+    assistant ─┘
 
-A software volume change is already contained in that reference, so
-cancellation keeps working across it. A hardware change rescales what the
-speaker actually emits *after* the tap, leaving the adaptive filter to
-reconverge against a reference that no longer matches the room. Volume
-buttons therefore report intent ("up", "down") and let the assistant own the
-level; the hardware mixer stays where startup put it.
+so that the volume in Home Assistant and the volume in the mixer are the same
+quantity rather than two that drift. This requires the assistant to run with
+``--external-volume``; without it the software player attenuates as well and
+everything is far too quiet.
+
+An earlier revision put the level in the software player instead, reasoning
+that ``module-echo-cancel`` taps its playback reference between the two
+stages, so a hardware change would leave the adaptive filter matched against
+a reference that no longer describes the room. That reasoning does not apply
+here: the assistant plays straight to the hardware sink, ``aec_speaker`` sits
+suspended outside the path, and the speaker cancels its own output in
+firmware anyway — measured at −98 dBFS in the microphone during playback,
+some 38 dB below the quiet room floor. Nothing is left for the host canceller
+to converge on. Keep this in mind before copying the module to hardware that
+does not do its own cancellation, where the old argument would hold.
 
 Mute is synced both ways, but it is not the simple boolean it looks like --
 the speaker mutes in its own firmware and nothing on the host reports it, so
@@ -38,7 +44,7 @@ import logging
 from typing import Any, Optional
 
 from .config import Config
-from . import evdev_watcher, executor
+from . import evdev_watcher, executor, pulse
 
 _LOG = logging.getLogger(__name__)
 
@@ -141,6 +147,35 @@ class LVAClient:
         if await self._send(_CMD_MUTE_MIC if muted else _CMD_UNMUTE_MIC):
             _LOG.info("[lva] reported mic as %s", "muted" if muted else "live")
 
+    async def _apply_volume(self, volume: Any) -> None:
+        """
+        Put the assistant's volume onto the system mixer.
+
+        This is the half that makes one slider out of two numbers: whatever
+        moved it — a button here, the slider in Home Assistant, the assistant
+        itself — arrives as the same broadcast, and lands on the sink. The
+        assistant is configured with --external-volume so it no longer
+        attenuates in software; without that flag this would apply the
+        reduction twice and everything would be far too quiet.
+        """
+        if not self._config.lva_sync_volume or not self._config.startup_pulse_user:
+            return
+        try:
+            level = float(volume)
+        except (TypeError, ValueError):
+            _LOG.debug("[lva] ignoring volume %r", volume)
+            return
+
+        percent = max(0, min(100, round(level * 100)))
+        if self._volume is not None and percent == round(self._volume * 100):
+            return
+        self._volume = level
+
+        if await pulse.apply_percent(self._config.startup_pulse_user, "sink", percent):
+            _LOG.info("[lva] speaker volume now %d%%", percent)
+        else:
+            _LOG.warning("[lva] could not set the speaker sink to %d%%", percent)
+
     async def _apply_mute(self, muted: bool) -> None:
         """
         Follow a mute change made on the assistant's side.
@@ -177,15 +212,17 @@ class LVAClient:
         data = msg.get("data") or {}
 
         if event == "snapshot":
-            self._volume = data.get("volume")
             _LOG.info(
                 "[lva] connected — assistant volume %s, mute %s",
-                self._volume, data.get("muted"),
+                data.get("volume"), data.get("muted"),
             )
+            # Volume *is* applied from a snapshot, unlike mute: the mixer is
+            # ours to drive and the assistant's number is the one the user set
+            # in Home Assistant, so a restart on either side re-converges here.
+            await self._apply_volume(data.get("volume"))
             # Mute is not applied from a snapshot; see _reconcile.
         elif event == "volume_changed":
-            self._volume = data.get("volume")
-            _LOG.debug("[lva] volume now %s", self._volume)
+            await self._apply_volume(data.get("volume"))
         elif event == "muted":
             # The assistant omits data when it means "muted".
             await self._apply_mute(bool(data.get("muted", True)))
@@ -233,7 +270,14 @@ class LVAClient:
                     self._ws = ws
                     await self._reconcile()
                     async for raw in ws:
-                        await self._handle_event(raw)
+                        try:
+                            await self._handle_event(raw)
+                        except Exception:  # noqa: BLE001
+                            # Without this the outer handler catches it, logs
+                            # "disconnected" at DEBUG and reconnects — so a
+                            # plain bug in here reads as a flaky socket. It
+                            # cost an hour once; keep it loud and keep going.
+                            _LOG.exception("[lva] error handling an event")
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001 - everything here is retryable

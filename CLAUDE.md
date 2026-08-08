@@ -49,16 +49,20 @@ Every obvious assumption about it is wrong, so do not "simplify" this back:
   what blocked barge-in, so do not lower the volume for it: an earlier revision
   of this file claimed a firmware "gate" made interruption impossible and set
   `speaker_percent = 40` on that basis. That was wrong — see BACKLOG.md V10.
-- **Do not use `speaker_percent` as the listening volume.** With `[lva]`
-  `sync_volume` on, the buttons and the Home Assistant slider both drive the
-  assistant's *player* volume, and the sink sits underneath as a fixed
-  attenuator. At 60 % that is -13.3 dB the user can never recover: they reach
-  the top of the only control they have and the speaker is still at a fifth of
-  its amplitude. Keep the sink at 100 % and let the player be the whole range.
-  Note the two scales differ — PulseAudio's percentage is its own cubic curve
-  (60 % = -13.3 dB, read the dB figure from `pactl`, never the percentage), and
-  mpv's volume is *also* cubic in amplitude, so translating a level from one to
-  the other means going through gain, not through percent.
+- **One volume, and it lives in the sink.** `speaker_percent` is only what the
+  sink holds until the assistant connects. After that the level comes from the
+  assistant — buttons, the Home Assistant slider and the assistant itself all
+  move the same number, which `lva._apply_volume()` puts on the sink with
+  `pactl set-sink-volume`. This *requires* the assistant to run with
+  `--external-volume` (`EXTERNAL_VOLUME=1` in the stack env); without it the
+  software player attenuates as well and everything is roughly a fifth as loud
+  as the slider claims. An earlier arrangement had the level in the software
+  player and left the sink pinned, which made the mixer and Home Assistant two
+  numbers that never agreed and capped the range at whatever the sink sat on.
+  Note the scales differ — PulseAudio's percentage is cubic (60 % = -13.3 dB;
+  read the dB figure from `pactl`, never the percentage), ALSA's is its own
+  again (`pactl` 57 % shows as `amixer` 78 %, both -14.6 dB), and mpv's volume
+  is cubic too. Convert between stages through gain, never through percent.
 - **evdev drops events.** `async_read_loop` raises `InvalidStateError` when a
   batch lands before the previous one is consumed, and *loses that event* — a
   mute press was observed lighting the LED, silencing the mic, arriving on
@@ -122,13 +126,28 @@ python3 tests/test_lva.py     # needs `websockets`; no hardware, no assistant
 
 Covers the LVA client against a stand-in peripheral API server: the echo guard,
 one-way connect reconciliation, the `nocap` token, reconnect, the offline
-fallback, and degrading without `websockets`. The hardware paths (mute probe,
+fallback, degrading without `websockets`, and that a volume from the assistant
+reaches the sink — including the no-op on a repeat and the silence when no
+`pulse_user` is configured. The hardware paths (mute probe,
 evdev reading) are not covered — those were verified on the device.
 
 ## Installation
 
 ```bash
 sudo ./install.sh
+```
+
+**The code runs from `/usr/lib/speakerctl`, not from the venv.** The unit sets
+`Environment=PYTHONPATH=/usr/lib/speakerctl`, and the venv at
+`/usr/lib/speakerctl-venv` only supplies the interpreter and the third-party
+packages. There is a stale copy of the package inside that venv's
+`site-packages` from an earlier layout; copying a fix there and restarting
+looks like a successful deploy and changes nothing. To patch a running host:
+
+```bash
+sudo cp *.py /usr/lib/speakerctl/speakerctl/
+sudo rm -rf /usr/lib/speakerctl/speakerctl/__pycache__
+sudo systemctl restart speakerctl
 ```
 
 ## Config

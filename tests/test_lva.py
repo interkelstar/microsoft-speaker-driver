@@ -27,7 +27,7 @@ sys.modules.setdefault("evdev", _stub)
 
 from websockets.asyncio.server import serve  # noqa: E402
 
-from speakerctl import evdev_watcher, executor, lva  # noqa: E402
+from speakerctl import evdev_watcher, executor, lva, pulse  # noqa: E402
 from speakerctl.config import ButtonConfig, Config  # noqa: E402
 
 PORT = 6155
@@ -68,6 +68,11 @@ async def main():
     async def fake_read(card):
         return hw_muted["v"]
     evdev_watcher.read_mute_state = fake_read
+
+    # There is no "tester" login here and no PulseAudio session behind it. The
+    # question under test is what the client decides to run, not whether pwd
+    # can resolve the user.
+    pulse.socket_ready = lambda user: True
 
     async def handler(ws):
         conns.append(ws)
@@ -110,6 +115,48 @@ async def main():
         await asyncio.sleep(0.2)
         check("volume button asks the assistant to step",
               received and received[-1]["command"] == "volume_up", str(received))
+
+        # ── the level lands on the system mixer ─────────────────────────────
+        # Only when a PulseAudio user is configured: without one there is no
+        # session to talk to, and the assistant's software volume is still in
+        # charge, so touching the sink would attenuate twice.
+        ran.clear()
+        vol_client = lva.LVAClient(make_config(startup_pulse_user="tester"))
+        vol_task = asyncio.create_task(vol_client.run())
+        await asyncio.sleep(0.6)
+        check("applies the snapshot volume to the sink",
+              any("set-sink-volume" in c and " 80%" in c for c in ran), f"ran={ran}")
+
+        ran.clear()
+        await conns[-1].send(json.dumps(
+            {"event": "volume_changed", "data": {"volume": 0.35}}))
+        await asyncio.sleep(0.3)
+        check("follows a volume change to the sink",
+              any("set-sink-volume" in c and " 35%" in c for c in ran), f"ran={ran}")
+
+        ran.clear()
+        await conns[-1].send(json.dumps(
+            {"event": "volume_changed", "data": {"volume": 0.35}}))
+        await asyncio.sleep(0.2)
+        check("same volume again is a no-op", ran == [], f"ran={ran}")
+
+        ran.clear()
+        await conns[-1].send(json.dumps(
+            {"event": "volume_changed", "data": {"volume": None}}))
+        await asyncio.sleep(0.2)
+        check("a malformed volume is ignored, not crashed on",
+              ran == [] and vol_client.connected, f"ran={ran}")
+
+        vol_task.cancel()
+        try:
+            await vol_task
+        except asyncio.CancelledError:
+            pass
+
+        ran.clear()
+        no_pulse = lva.LVAClient(make_config())
+        await no_pulse._apply_volume(0.4)
+        check("leaves the sink alone with no PulseAudio user", ran == [], f"ran={ran}")
 
         hw_muted["v"] = True
         received.clear()

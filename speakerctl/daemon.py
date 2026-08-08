@@ -6,42 +6,19 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import pwd
 from pathlib import Path
 
 import pyudev
 
 from .config import Config, load_config
 from .discovery import DeviceSet, discover
-from . import aec, evdev_watcher, executor, hidraw_watcher, lva
+from . import aec, evdev_watcher, executor, hidraw_watcher, lva, pulse
 
 _LOG = logging.getLogger(__name__)
 
 
 class DeviceGoneError(Exception):
     pass
-
-
-def _pactl_cmd(pulse_user: str, kind: str, percent: int) -> str:
-    """
-    Build a shell command that finds the Microsoft USB-C Speaker sink or source
-    in `pulse_user`'s PulseAudio session and sets its volume.
-    """
-    assert kind in ("sink", "source")
-    needs_sudo = f"sudo -u {pulse_user} "
-    xdg = f'XDG_RUNTIME_DIR="/run/user/$(id -u {pulse_user})"'
-    # Exclude .monitor and .echo-cancel — we want the raw hardware sink/source.
-    list_cmd = (
-        f'{needs_sudo}{xdg} pactl list {kind}s short '
-        f'| awk \'/Modern_USB-C_Speaker/ && !/monitor|echo-cancel/ {{print $2; exit}}\''
-    )
-    # NAME empty => no matching sink/source yet: exit 1 so callers can tell
-    # "not found" apart from "pactl ran and succeeded".
-    return (
-        f'NAME=$({list_cmd}); '
-        f'if [ -n "$NAME" ]; then {needs_sudo}{xdg} pactl set-{kind}-volume "$NAME" {percent}%; '
-        f'else echo "speakerctl: no PulseAudio {kind} found for speaker" >&2; exit 1; fi'
-    )
 
 
 def _alsa_card_ready(card: str) -> bool:
@@ -52,46 +29,12 @@ def _alsa_card_ready(card: str) -> bool:
         return False
 
 
-def _pulse_socket_ready(pulse_user: str) -> bool:
-    """Check whether pulse_user's PulseAudio/PipeWire user session is up yet.
-
-    We run as our own system user, so /run/user/<uid> (mode 0700) is not ours
-    to traverse. Path.exists() swallows ENOENT but lets EACCES through, so a
-    naive check raises instead of answering. Permission denied is in fact the
-    answer we want: the directory is there, which means the session is up —
-    only ENOENT means it is not. Whether pactl can actually talk to it is
-    decided by the call itself, which reports its own exit code.
-    """
-    try:
-        uid = pwd.getpwnam(pulse_user).pw_uid
-    except KeyError:
-        return False
-    run_dir = Path(f"/run/user/{uid}")
-    for candidate in (run_dir / "pulse" / "native", run_dir / "pipewire-0"):
-        try:
-            if candidate.exists():
-                return True
-        except PermissionError:
-            return True
-        except OSError:
-            continue
-    return False
-
-
 async def _apply_alsa_percent(card: str, control: str, pct: int) -> bool:
     """Set an ALSA mixer control if the card is registered. Returns success."""
     if not _alsa_card_ready(card):
         _LOG.debug("ALSA card %s not registered yet — will retry", card)
         return False
     return await executor.run(f"amixer -c {card} -M set '{control}' {pct}%") == 0
-
-
-async def _apply_pulse_percent(pulse_user: str, kind: str, pct: int) -> bool:
-    """Set a PulseAudio/PipeWire sink or source volume if the session is up. Returns success."""
-    if not _pulse_socket_ready(pulse_user):
-        _LOG.debug("PulseAudio/PipeWire session for %s not up yet — will retry", pulse_user)
-        return False
-    return await executor.run(_pactl_cmd(pulse_user, kind, pct)) == 0
 
 
 async def _apply_startup_audio(config: Config) -> bool:
@@ -134,7 +77,7 @@ async def _apply_startup_audio(config: Config) -> bool:
             else pct
         )
         alsa_ok = await _apply_alsa_percent(config.alsa_card, "PCM", alsa_pct)
-        pulse_ok = await _apply_pulse_percent(pulse_user, "sink", pct) if pulse_user else True
+        pulse_ok = await pulse.apply_percent(pulse_user, "sink", pct) if pulse_user else True
         if alsa_ok and pulse_ok:
             if alsa_pct == pct:
                 _LOG.info("Set speaker volume to %d%%", pct)
@@ -145,7 +88,7 @@ async def _apply_startup_audio(config: Config) -> bool:
     if config.startup_mic_percent is not None:
         pct = config.startup_mic_percent
         alsa_ok = await _apply_alsa_percent(config.alsa_card, "Headset", pct)
-        pulse_ok = await _apply_pulse_percent(pulse_user, "source", pct) if pulse_user else True
+        pulse_ok = await pulse.apply_percent(pulse_user, "source", pct) if pulse_user else True
         if alsa_ok and pulse_ok:
             _LOG.info("Set mic volume to %d%%", pct)
         ok = ok and alsa_ok and pulse_ok
