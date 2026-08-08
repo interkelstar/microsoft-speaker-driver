@@ -64,6 +64,14 @@ _QUIET_EVENTS = frozenset({"tts_finished", "idle", "pipeline_error"})
 _CONNECT_TIMEOUT = 5.0
 _RECONNECT_SECONDS = 5.0
 
+# Keepalive of our own. Without it a half-dead socket is only discovered when
+# something tries to send, and `send` does not fail on one — it buffers into a
+# connection nobody is reading. The observed cost was a button press reported
+# as "stopped the assistant" while the assistant had had no client for two
+# minutes. These make the client notice within ~15 s and reconnect.
+_PING_INTERVAL = 10.0
+_PING_TIMEOUT = 5.0
+
 
 def _import_connect():
     """
@@ -302,10 +310,17 @@ class LVAClient:
         url = self._config.lva_url
         _LOG.info("[lva] syncing %s with %s", " and ".join(synced), url)
 
+        was_connected = False
         while True:
             try:
-                async with connect(url, open_timeout=_CONNECT_TIMEOUT) as ws:
+                async with connect(
+                    url,
+                    open_timeout=_CONNECT_TIMEOUT,
+                    ping_interval=_PING_INTERVAL,
+                    ping_timeout=_PING_TIMEOUT,
+                ) as ws:
                     self._ws = ws
+                    was_connected = True
                     await self._reconcile()
                     async for raw in ws:
                         try:
@@ -319,7 +334,15 @@ class LVAClient:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001 - everything here is retryable
-                _LOG.debug("[lva] disconnected (%s)", exc)
+                if was_connected:
+                    # Losing an established connection is worth a line: while
+                    # it is down the buttons quietly stop reaching the
+                    # assistant, and nothing else says so.
+                    _LOG.warning("[lva] connection lost (%s) — reconnecting", exc)
+                else:
+                    # Not yet up. The assistant is a container that gets
+                    # rebuilt; this is normal and would otherwise spam.
+                    _LOG.debug("[lva] not connected (%s)", exc)
             finally:
                 self._ws = None
                 # A dropped socket means we stop hearing tts_finished, so
@@ -327,3 +350,4 @@ class LVAClient:
                 # is still talking and swallowing presses forever.
                 self._noisy = False
             await asyncio.sleep(_RECONNECT_SECONDS)
+            was_connected = False
