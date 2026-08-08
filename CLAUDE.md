@@ -105,15 +105,19 @@ speakerctl/
 (`ws://127.0.0.1:6055`), so the buttons and the assistant share one idea of
 volume and mute.
 
-- **Volume is owned by the assistant, not the mixer.** With sync on, the volume
-  buttons send `volume_up`/`volume_down` instead of running `amixer`. Doing both
-  would attenuate twice, and the hardware half would also rescale what the
-  speaker emits *after* `module-echo-cancel` taps its playback reference,
-  forcing the adaptive filter to reconverge on every press.
+- **One number, applied to the sink.** With sync on, the volume buttons send
+  `volume_up`/`volume_down` rather than running `amixer`; the assistant steps
+  its number, broadcasts it, and `lva._apply_volume()` writes it to the
+  PulseAudio sink. So the buttons, the Home Assistant slider and `alsamixer`
+  all show the same level. The assistant must run with `--external-volume`, or
+  it attenuates in software as well and the two stages multiply.
 - **Buttons never go dead.** If the assistant is unreachable the press falls
   back to the local mixer command.
 - **Mute syncs both ways**, but hardware wins on connect: a stale remote "not
   muted" must never silently reopen a microphone the user muted by hand.
+- **A button can interrupt.** `interrupts_playback` on any `[button]` section
+  makes a press send `stop_pipeline` while the assistant is speaking, and run
+  its normal command otherwise. Used for Teams; see the top of this file.
 - The `Headset` control is a **capture** switch (`cswitch`, no `pswitch`) —
   the tokens are `cap`/`nocap`; `amixer set Headset mute` exits 1.
 - The peripheral API has **no authentication**. Run the assistant with
