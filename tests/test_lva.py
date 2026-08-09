@@ -63,10 +63,15 @@ async def main():
         return 0
     executor.run = real_run
 
-    hw_muted = {"v": False}
+    # Records every attempt to guess the mute state from the audio. Connecting
+    # must never do this: the probe cannot tell a silent room from a source
+    # that is not delivering, and one wrong "muted" left the speaker deaf for
+    # eleven hours. Returning True makes a regression loud rather than subtle.
+    probed = []
 
-    async def fake_read(card):
-        return hw_muted["v"]
+    async def fake_read(config):
+        probed.append(config)
+        return True
     evdev_watcher.read_mute_state = fake_read
 
     # There is no "tester" login here and no PulseAudio session behind it. The
@@ -90,12 +95,17 @@ async def main():
         await asyncio.sleep(0.6)
 
         check("connects", client.connected)
-        check("reports hardware mic state on connect",
+        check("forces the microphone on at the start of a session",
               received and received[0]["command"] == "unmute_mic",
               str(received[:1]))
+        check("clears the firmware mute in the hardware as well",
+              ran == ["amixer -c Speaker set Headset cap"], f"ran={ran}")
+        check("never guesses the mute state from the audio",
+              probed == [], f"probed={len(probed)}")
         check("does NOT apply a stale snapshot mute to the microphone",
-              ran == [], f"ran={ran}")
+              not any("nocap" in c for c in ran), f"ran={ran}")
 
+        ran.clear()
         await conns[0].send(json.dumps({"event": "muted", "data": {"muted": False}}))
         await asyncio.sleep(0.2)
         check("ignores the echo of its own report", ran == [], f"ran={ran}")
@@ -218,13 +228,24 @@ async def main():
         await conns[0].send(json.dumps({"event": "idle", "data": {}}))
         await asyncio.sleep(0.2)
 
-        hw_muted["v"] = True
+        # Pressing the physical button is the only thing that can make the
+        # daemon believe the microphone is off, and that belief has to survive
+        # the assistant restarting underneath it — the assistant is a container
+        # that gets rebuilt, and a redeploy that quietly reopened a microphone
+        # the user had closed by hand would be the opposite failure to the one
+        # this reconciliation was rewritten to stop.
+        await client.report_mute(True)
+        ran.clear()
         received.clear()
         await conns[0].close()
         await asyncio.sleep(1.2)
         check("reconnects after the assistant drops", client.connected)
-        check("re-reports mic state on reconnect",
+        check("a hand-muted microphone stays muted across a reconnect",
               any(m["command"] == "mute_mic" for m in received), str(received))
+        check("a reconnect does not touch the hardware switch",
+              ran == [], f"ran={ran}")
+        check("a reconnect still does not guess",
+              probed == [], f"probed={len(probed)}")
 
         task.cancel()
         try:

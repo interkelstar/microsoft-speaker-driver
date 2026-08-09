@@ -32,9 +32,10 @@ to converge on. Keep this in mind before copying the module to hardware that
 does not do its own cancellation, where the old argument would hold.
 
 Mute is synced both ways, but it is not the simple boolean it looks like --
-the speaker mutes in its own firmware and nothing on the host reports it, so
-the state has to be measured from the audio. See CLAUDE.md and
-evdev_watcher.read_mute_state().
+the speaker mutes in its own firmware and nothing on the host reports it. A
+session therefore does not begin by asking; it begins by forcing the
+microphone on, and tracks it from the button presses after that. See CLAUDE.md
+and _reconcile() for why measuring it here was worse than deciding.
 """
 from __future__ import annotations
 
@@ -44,7 +45,7 @@ import logging
 from typing import Any, Optional
 
 from .config import Config
-from . import evdev_watcher, executor, pulse
+from . import executor, pulse
 
 _LOG = logging.getLogger(__name__)
 
@@ -167,22 +168,60 @@ class LVAClient:
 
     async def _reconcile(self) -> None:
         """
-        On every connect, tell the assistant what the microphone is really doing.
+        On connect, put the microphone and the assistant into one known state.
 
-        Deliberately one-way. The assistant's stored mute state can be stale —
-        it may have restarted while the speaker did not — and acting on a stale
-        "not muted" would silently reopen a microphone the user muted with the
-        physical button. Hardware is the honest source, so hardware wins the
-        initial disagreement; the assistant only leads once it is in sync.
+        The first connect of a session forces the microphone *on* in both
+        places. Every later reconnect only repeats what this daemon already
+        knows, because it has watched every button press since.
+
+        It used to measure instead, and that is what this replaces. There is
+        no register to read — the speaker mutes in firmware — so the state was
+        inferred from a second of audio, "muted" meaning a peak below 8. The
+        flaw is that such a measurement cannot fail: silence and no-signal are
+        the same reading. One night the probe ran a second after the assistant
+        restarted, called a live microphone muted, and told the assistant to
+        mute it. The microphone had been writing clips peaking at 1182 the
+        second before and the button's LED was dark, so both the audio and the
+        hardware disagreed with the probe. The assistant then ignored a wake
+        word it went on recognising at 0.996 for eleven hours, and logged
+        nothing, because a muted wake word is dropped silently.
+
+        The two possible errors do not cost the same. Forcing the microphone
+        on when the user had muted it by hand costs one press of a button they
+        are standing next to. Leaving it off costs a speaker that is deaf until
+        somebody happens to investigate, and this device shows no sign either
+        way. So the doubtful case resolves towards listening.
+
+        Writing ``cap`` here is *not* the mirroring CLAUDE.md warns against.
+        That self-lock comes from feeding the measurement back into ``Headset``;
+        this writes a constant, whatever was read or not read. It also clears a
+        firmware mute and the LED with it, so afterwards the hardware and the
+        assistant genuinely agree rather than merely claiming to.
         """
         if not self._config.lva_sync_mute:
             return
-        muted = await evdev_watcher.read_mute_state(self._config)
-        if muted is None:
+
+        if self._muted is None:
+            # No press has been seen yet: this is the daemon's first connect,
+            # or the first since the speaker was replugged. Nothing here knows
+            # what the firmware is doing, and asking it has been tried.
+            rc = await executor.run(
+                f"amixer -c {self._config.alsa_card} set Headset cap"
+            )
+            if rc != 0:
+                _LOG.warning(
+                    "[lva] amixer exited %s clearing the hardware mute — "
+                    "the assistant is being told the microphone is live anyway",
+                    rc,
+                )
+            self._muted = False
+            if await self._send(_CMD_UNMUTE_MIC):
+                _LOG.info("[lva] microphone forced on for a new session")
             return
-        self._muted = muted
-        if await self._send(_CMD_MUTE_MIC if muted else _CMD_UNMUTE_MIC):
-            _LOG.info("[lva] reported mic as %s", "muted" if muted else "live")
+
+        if await self._send(_CMD_MUTE_MIC if self._muted else _CMD_UNMUTE_MIC):
+            _LOG.info("[lva] reported mic as %s",
+                      "muted" if self._muted else "live")
 
     async def _apply_volume(self, volume: Any) -> None:
         """

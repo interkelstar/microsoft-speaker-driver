@@ -45,7 +45,21 @@ Every obvious assumption about it is wrong, so do not "simplify" this back:
   Headset mute` exits 1.
 - **So state is measured, not read**: `read_mute_state()` records ~1 s of audio
   and calls it muted below a peak of 8. Muted reads 1 (0 under an ALSA mute);
-  live in a quiet room never measured below 50.
+  a live room has measured as low as 39.
+- **That measurement is no longer trusted on connect, and must not be again**
+  (2026-08-09). It cannot fail: silence and a source that is not delivering are
+  the same reading, and it answers "muted" to both. One night it ran a second
+  after the assistant's container restarted, called a live microphone muted,
+  and told the assistant to mute it — the microphone had been writing clips
+  peaking at 1182 the second before, and the button's LED was dark, so both the
+  audio and the hardware disagreed with it. The assistant then dropped a wake
+  word it went on recognising at 0.996 for eleven hours. `_reconcile()` now
+  *forces* the microphone on at the start of a session instead of asking, and
+  tracks it from button presses after that. The errors are not symmetric:
+  wrongly opening a microphone costs one press of a button the user is next to,
+  wrongly closing one costs a speaker that is deaf with no symptom but silence.
+  The probe survives only in the button handler, where it runs right after a
+  press and the difference it is reading is 1 against 2400.
 - **Never mirror that measurement back into `Headset`.** It self-locks: the next
   press clears the firmware mute, `nocap` remains, the probe still hears silence,
   and the daemon writes `nocap` again — muted forever.
@@ -113,8 +127,12 @@ volume and mute.
   it attenuates in software as well and the two stages multiply.
 - **Buttons never go dead.** If the assistant is unreachable the press falls
   back to the local mixer command.
-- **Mute syncs both ways**, but hardware wins on connect: a stale remote "not
-  muted" must never silently reopen a microphone the user muted by hand.
+- **Mute syncs both ways.** A session *starts* by forcing the microphone on, in
+  the hardware (`Headset cap`, which clears a firmware mute and the LED) and in
+  the assistant, and the daemon tracks it from button presses from there. A
+  reconnect only repeats what it already knows, so muting by hand survives the
+  assistant's container being rebuilt underneath it — but a reboot opens the
+  microphone again, deliberately. See `_reconcile()` and the note above.
 - **A button can interrupt.** `interrupts_playback` on any `[button]` section
   makes a press send `stop_pipeline` while the assistant is speaking, and run
   its normal command otherwise. Used for Teams; see the top of this file.
@@ -144,10 +162,13 @@ python3 tests/test_lva.py     # needs `websockets`; no hardware, no assistant
 ```
 
 Covers the LVA client against a stand-in peripheral API server: the echo guard,
-one-way connect reconciliation, the `nocap` token, reconnect, the offline
-fallback, degrading without `websockets`, and that a volume from the assistant
-reaches the sink — including the no-op on a repeat and the silence when no
-`pulse_user` is configured. The hardware paths (mute probe,
+the forced unmute that starts a session, that connecting never probes for the
+mute state, that a hand-muted microphone survives a reconnect, the `nocap`
+token, reconnect, the offline fallback, degrading without `websockets`, and
+that a volume from the assistant reaches the sink — including the no-op on a
+repeat and the silence when no `pulse_user` is configured. The stubbed
+`read_mute_state` returns "muted", so any code that starts consulting it on
+connect again fails the suite loudly. The hardware paths (the probe itself,
 evdev reading) are not covered — those were verified on the device.
 
 ## Installation
