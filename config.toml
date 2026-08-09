@@ -73,8 +73,11 @@ command = "amixer -c Speaker -M set 'PCM' 5%+"
 command = "amixer -c Speaker -M set 'PCM' 5%-"
 
 [mute]
-# $STATE env var is set to "muted" or "unmuted" (post-toggle state).
-# The kernel already handles the actual mute — this is for notifications.
+# $STATE is "muted", "unmuted", or "unknown".
+# The speaker mutes inside its own firmware and reports it nowhere on the host,
+# so the daemon works the state out by listening to the microphone — which needs
+# [startup] pulse_user above. Without it $STATE is always "unknown".
+# The muting itself has already happened; this hook is for notifications.
 command = "/etc/speakerctl/scripts/mute-notify.sh"
 
 [teams]

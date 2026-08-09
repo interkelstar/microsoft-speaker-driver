@@ -206,8 +206,10 @@ async def watch(
             state = await _get_mute_state(config)
             _LOG.info("mute → %s", state)
             await executor.run(config.mute.command, extra_env={"STATE": state})
-            # Purely additive: the kernel has already muted the mic, this only
-            # lets the assistant know, so it can show the right state in Home
-            # Assistant instead of listening to a microphone that is off.
+            # Purely additive: the speaker's own firmware has already muted the
+            # mic, this only lets the assistant know, so it can show the right
+            # state in Home Assistant instead of listening to a microphone that
+            # is off. Nothing on the host reports that mute, which is why the
+            # state above had to be measured rather than read.
             if lva_client is not None and state != "unknown":
                 await lva_client.report_mute(state == "muted")

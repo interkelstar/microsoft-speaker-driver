@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this repo is
 
-A userspace driver that makes the **Microsoft Modern USB-C Speaker** (VID/PID `045e:083e`, kernel name "Generic Modern USB-C Speaker") fully functional on Linux. Single Python asyncio daemon handles all 6 hardware buttons:
+A userspace driver that makes the **Microsoft Modern USB-C Speaker** (VID/PID `045e:083e`, kernel name "Generic Modern USB-C Speaker") fully functional on Linux. Single Python asyncio daemon handles all five hardware buttons:
 
 | Button | Source | Action |
 |---|---|---|
@@ -77,7 +77,24 @@ Every obvious assumption about it is wrong, so do not "simplify" this back:
   does to a *loud* voice was never established, and it turned out **not** to be
   what blocked barge-in, so do not lower the volume for it: an earlier revision
   of this file claimed a firmware "gate" made interruption impossible and set
-  `speaker_percent = 40` on that basis. That was wrong — see BACKLOG.md V10.
+  `speaker_percent = 40` on that basis. That was wrong.
+
+  Direct evidence, 2026-08-09, in one recording so it carries its own control:
+  while the assistant read a long answer aloud, the microphone showed the
+  assistant's own speech at a peak of **1** and a person speaking in the room at
+  **4014–5891**, and the stop word fired on it. A firmware gate that dropped the
+  microphone for the whole of playback would have suppressed both. It suppresses
+  only the speaker's own output.
+
+  Note for anyone reconciling documents: `BACKLOG.md` in the parent smart-home
+  repo still records the older conclusion (V10, "half-duplex in firmware, drops
+  its own microphone by ~40 dB for the whole of playback") as settled fact. The
+  measurement above contradicts it. This file is the one that has been re-checked.
+
+  Two figures for the same quantity also disagree and neither has been re-taken:
+  this section says the raw microphone sits at **-85 dBFS** during playback,
+  `lva.py` says **-98 dBFS**. The qualitative claim — the device subtracts its own
+  output and passes everything else — is what both agree on and what is load-bearing.
 - **One volume, and it lives in the sink.** `speaker_percent` is only what the
   sink holds until the assistant connects. After that the level comes from the
   assistant — buttons, the Home Assistant slider and the assistant itself all
