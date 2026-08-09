@@ -1,0 +1,13 @@
+# Runtime dependencies. Pinned only at the floor: these are small, stable
+# libraries and a hard pin would age worse than a range.
+evdev
+pyudev
+
+# websockets is optional at runtime -- lva.py imports it lazily and the daemon
+# runs without it -- but it is installed unconditionally, because a venv that
+# silently lacks it turns enabling [lva] into a mystery.
+#
+# The floor is 14: tests/test_lva.py uses websockets.asyncio.server, which does
+# not exist before that. The daemon itself still supports 10-13 via a two-branch
+# import, so an older environment keeps working; only the tests need the newer.
+websockets>=14

@@ -20,7 +20,11 @@ import sys
 signal.signal(signal.SIGHUP, signal.SIG_IGN)
 
 from . import __version__  # noqa: E402
-from .daemon import run  # noqa: E402
+
+# daemon is NOT imported here: it pulls in evdev and pyudev at module scope, so
+# importing it at start-up makes `--check` die on exactly the machine that needs
+# it — one where a dependency failed to build. It is imported inside main(),
+# after --check has had its chance to run and explain that.
 
 DEFAULT_CONFIG = "/etc/speakerctl/config.toml"
 
@@ -34,7 +38,17 @@ def main() -> None:
                         help=f"Path to config.toml (default: {DEFAULT_CONFIG})")
     parser.add_argument("--debug", action="store_true",
                         help="Enable DEBUG logging")
+    parser.add_argument("--check", action="store_true",
+                        help="Report what is and is not working, then exit")
+    parser.add_argument("--version", action="version",
+                        version=f"speakerctl {__version__}")
     args = parser.parse_args()
+
+    if args.check:
+        from .check import run_check
+        sys.exit(run_check(args.config))
+
+    from .daemon import run
 
     logging.basicConfig(
         level=logging.DEBUG if args.debug else logging.INFO,

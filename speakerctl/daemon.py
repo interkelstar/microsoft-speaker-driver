@@ -22,11 +22,17 @@ class DeviceGoneError(Exception):
 
 
 def _alsa_card_ready(card: str) -> bool:
-    """Check whether an ALSA card with this name is enumerated yet."""
-    try:
-        return card in Path("/proc/asound/cards").read_text()
-    except OSError:
-        return False
+    """Check whether an ALSA card with this name is enumerated yet.
+
+    Compares against the parsed card names rather than searching the raw file.
+    Each line of /proc/asound/cards carries both a short name in brackets and a
+    long description, so a substring test let a host whose *description*
+    contained the configured word — "USB Speaker", say — report that a card
+    named Speaker was ready. Every amixer call against it then failed, which is
+    a broken volume button and a healthy-looking service.
+    """
+    from .check import alsa_cards
+    return card in alsa_cards()
 
 
 async def _apply_alsa_percent(card: str, control: str, pct: int) -> bool:
