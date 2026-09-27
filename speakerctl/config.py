@@ -12,6 +12,11 @@ class ButtonConfig:
     # opens a conversation, mid-answer it ends one — the same thing the stop
     # word does, without having to be heard over the speaker.
     interrupts_playback: bool = False
+    # Run this instead of `command` when a second press follows within
+    # `double_tap_seconds`. Unset, a press acts at once, as it always did;
+    # set, a single press waits out the window before acting.
+    double_tap_command: str | None = None
+    double_tap_seconds: float = 0.4
 
 
 @dataclass
@@ -53,6 +58,8 @@ def load_config(path: str | Path) -> Config:
             command=sec["command"],
             debounce_seconds=float(sec.get("debounce_seconds", 0.0)),
             interrupts_playback=bool(sec.get("interrupts_playback", False)),
+            double_tap_command=sec.get("double_tap_command"),
+            double_tap_seconds=float(sec.get("double_tap_seconds", 0.4)),
         )
 
     startup = data.get("startup", {})

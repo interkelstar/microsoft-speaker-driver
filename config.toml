@@ -91,3 +91,9 @@ interrupts_playback = true
 [phone]
 command = "/etc/speakerctl/scripts/phone-button.sh"
 debounce_seconds = 0.5
+# Optional double tap, on any button. A second press within the window runs
+# double_tap_command instead; a single press then waits out the window before
+# acting. Set debounce_seconds below the window (or drop it) — a 0.5 s debounce
+# swallows the second press. Presses closer than 80 ms count as one bounce.
+# double_tap_command = "/etc/speakerctl/scripts/phone-button-double.sh"
+# double_tap_seconds = 0.4
